@@ -17,6 +17,8 @@ Welcome to the architectural map of **HappyTool Tauri** (Tauri 2.0 Standalone Hi
   - `utils/tauriBridge.ts`: 1:1 `window.electronAPI` emulation, synchronous `getZoomFactor()`, `.title-drag` window dragging delegation, and local file path registry.
   - `utils/tauriSocket.ts`: `HybridTauriSocket` bridging port `3003` Socket.IO server (`server/index.cjs`) and Tauri Native IPC/Events.
   - `components/WindowTitleBarControls.tsx`: Top-right `138x32px` frameless window caption controls matching `#0f172a` / `#94a3b8`.
+- **CI/CD Automation**:
+  - `.github/workflows/release.yml`: GitHub Actions workflow that detects `package.json` version bumps on push, builds Windows `.exe` / `.msi` standalone binaries via `tauri-apps/tauri-action`, and publishes a GitHub Release.
 
 ---
 

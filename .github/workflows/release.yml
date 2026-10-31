@@ -1,0 +1,108 @@
+name: Release Tauri App
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.compare_version.outputs.should_release }}
+      version: ${{ steps.pkg_version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Extract Current package.json Version
+        id: pkg_version
+        run: |
+          CURRENT_VER=$(node -p "require('./package.json').version")
+          echo "version=${CURRENT_VER}" >> "$GITHUB_OUTPUT"
+          echo "Current version in package.json: ${CURRENT_VER}"
+
+      - name: Compare with Previous Commit Version
+        id: compare_version
+        run: |
+          git checkout HEAD~1 package.json 2>/dev/null || true
+          if [ -f package.json ]; then
+            PREV_VER=$(node -p "try { require('./package.json').version } catch(e) { '' }")
+          else
+            PREV_VER=""
+          fi
+          echo "Previous version: ${PREV_VER}"
+          git checkout HEAD package.json
+
+          CURRENT_VER="${{ steps.pkg_version.outputs.version }}"
+          if [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$PREV_VER" ]; then
+            echo "Version changed from '$PREV_VER' to '$CURRENT_VER'. Triggering release!"
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version has not changed ($CURRENT_VER == $PREV_VER). Skipping build/release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-release:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Sync tauri.conf.json Version with package.json
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
+            const tauriPath = './src-tauri/tauri.conf.json';
+            const tauriConf = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
+            tauriConf.version = pkg.version;
+            fs.writeFileSync(tauriPath, JSON.stringify(tauriConf, null, 2));
+            console.log('Updated tauri.conf.json version to:', pkg.version);
+          "
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build Frontend
+        run: npm run build
+
+      - name: Build Tauri Desktop (.exe / .msi)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v${{ needs.check-version.outputs.version }}
+          releaseName: 'HappyTool v${{ needs.check-version.outputs.version }}'
+          releaseBody: |
+            ## 🎉 HappyTool Tauri Edition v${{ needs.check-version.outputs.version }}
+            - Automated Build by GitHub Actions
+            - High-Performance Log Analyzer (Tauri 2.0)
+            - Release Assets below include the Windows Standalone Installer (.msi / .exe).
+          releaseDraft: false
+          prerelease: false
