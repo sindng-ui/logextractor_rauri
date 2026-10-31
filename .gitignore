@@ -16,6 +16,7 @@ target/
 src-tauri/target/
 src-wasm/target/
 src-tauri/gen/schemas/
+src-tauri/.cargo/
 
 # Environment and local configs
 .env
