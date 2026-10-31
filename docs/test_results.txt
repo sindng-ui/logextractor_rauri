@@ -1,0 +1,182 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.12 [39m[90mK:/Antigravity_Projects/gitbase/happytool_tauri[39m
+
+ [32m✓[39m test/utils/perfAnalysis.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m test/workers/workerDataReader.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+[90mstdout[2m | test/sdb_connection.test.js
+[22m[39m[TIME] server/index.cjs loaded (Lightweight Mode)
+
+ [32m✓[39m test/hooks/useLogExportActions.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m test/utils/tauriBridge.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m test/hooks/useCliHandlers.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [32m✓[39m test/components/CliApp.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+ [32m✓[39m test/utils/logFiltering.test.ts [2m([22m[2m26 tests[22m[2m)[22m[33m 335[2mms[22m[39m
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould auto-load SINGLE mode file from localStorage
+[22m[39m[LogWorkerRegistry] Clearing all registered workers... 🧹
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould auto-load SINGLE mode file from localStorage
+[22m[39m[LogWorkerRegistry] Creating new workers for tab: test-tab 🏭
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould auto-load SINGLE mode file from localStorage
+[22m[39m[useLog-left] Initiating LOCAL_FILE_STREAM for logfile.log, size: 0MB
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould auto-load SPLIT mode files from localStorage
+[22m[39m[LogWorkerRegistry] Clearing all registered workers... 🧹
+[LogWorkerRegistry] Terminating workers for tab: test-tab 💥
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould auto-load SPLIT mode files from localStorage
+[22m[39m[LogWorkerRegistry] Creating new workers for tab: test-tab 🏭
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould auto-load SPLIT mode files from localStorage
+[22m[39m[useLog-left] Initiating LOCAL_FILE_STREAM for left.log, size: 0MB
+[useLog-right] Initiating LOCAL_FILE_STREAM for right.log, size: 0MB
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould prevent overwriting state before loadState completes (Race Condition Check)
+[22m[39m[LogWorkerRegistry] Clearing all registered workers... 🧹
+[LogWorkerRegistry] Terminating workers for tab: test-tab 💥
+
+[90mstdout[2m | test/hooks/useLogPersistence.test.tsx[2m > [22m[2mLog Persistence & Auto-loading[2m > [22m[2mshould prevent overwriting state before loadState completes (Race Condition Check)
+[22m[39m[LogWorkerRegistry] Creating new workers for tab: test-tab 🏭
+
+ [32m✓[39m test/hooks/useLogPersistence.test.tsx [2m([22m[2m3 tests[22m[2m)[22m[32m 167[2mms[22m[39m
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST emit sdb_status with status:connected after successful device verification
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST emit sdb_status with status:connected after successful device verification
+[22m[39mInitiating SDB connection for device: test-device using system sdb
+Verifying SDB connection: sdb -s test-device shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s test-device shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb -s test-device shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb -s test-device shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST emit sdb_status with status:connected after successful device verification
+[22m[39m[SDB] Shell stream ready for user commands on test-device
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST NOT emit sdb_status:connected if verification fails
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST NOT emit sdb_status:connected if verification fails
+[22m[39mInitiating SDB connection for device: bad-device using system sdb
+Verifying SDB connection: sdb -s bad-device shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s bad-device shell echo READY"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST emit sdb_status:connected even with auto-detect deviceId
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST emit sdb_status:connected even with auto-detect deviceId
+[22m[39mInitiating SDB connection for device: auto-detect using system sdb
+Verifying SDB connection: sdb shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🔴 CRITICAL: sdb_status "connected" event emission[2m > [22m[2mMUST emit sdb_status:connected even with auto-detect deviceId
+[22m[39m[SDB] Shell stream ready for user commands on Auto
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Device verification timeout (5s)[2m > [22m[2mMUST timeout and emit error if device verification hangs
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Device verification timeout (5s)[2m > [22m[2mMUST timeout and emit error if device verification hangs
+[22m[39mInitiating SDB connection for device: slow-device using system sdb
+Verifying SDB connection: sdb -s slow-device shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s slow-device shell echo READY"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Device verification timeout (5s)[2m > [22m[2mMUST NOT timeout if device responds within 5s
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Device verification timeout (5s)[2m > [22m[2mMUST NOT timeout if device responds within 5s
+[22m[39mInitiating SDB connection for device: fast-device using system sdb
+Verifying SDB connection: sdb -s fast-device shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s fast-device shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb -s fast-device shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb -s fast-device shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Device verification timeout (5s)[2m > [22m[2mMUST NOT timeout if device responds within 5s
+[22m[39m[SDB] Shell stream ready for user commands on fast-device
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Custom SDB path handling[2m > [22m[2mMUST use custom sdbPath when provided
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Custom SDB path handling[2m > [22m[2mMUST use custom sdbPath when provided
+[22m[39mInitiating SDB connection for device: test using D:\custom\path\sdb.exe
+Verifying SDB connection: D:\custom\path\sdb.exe -s test shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "D:\custom\path\sdb.exe -s test shell echo READY"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Custom SDB path handling[2m > [22m[2mMUST use system "sdb" when sdbPath is empty/undefined
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟡 Custom SDB path handling[2m > [22m[2mMUST use system "sdb" when sdbPath is empty/undefined
+[22m[39mInitiating SDB connection for device: test using system sdb
+Verifying SDB connection: sdb -s test shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s test shell echo READY"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Log streaming after connection[2m > [22m[2mMUST stream log data from sdb dlogutil to client
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Log streaming after connection[2m > [22m[2mMUST stream log data from sdb dlogutil to client
+[22m[39mInitiating SDB connection for device: test using system sdb
+Verifying SDB connection: sdb -s test shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s test shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb -s test shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb -s test shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Log streaming after connection[2m > [22m[2mMUST stream log data from sdb dlogutil to client
+[22m[39m[SDB] Shell stream ready for user commands on test
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Command and tag substitution[2m > [22m[2mMUST substitute $(TAGS) with actual tag values
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Command and tag substitution[2m > [22m[2mMUST substitute $(TAGS) with actual tag values
+[22m[39mInitiating SDB connection for device: test using system sdb
+Verifying SDB connection: sdb -s test shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s test shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb -s test shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb -s test shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Command and tag substitution[2m > [22m[2mMUST substitute $(TAGS) with actual tag values
+[22m[39m[SDB] Shell stream ready for user commands on test
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Command and tag substitution[2m > [22m[2mMUST handle empty tags gracefully
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Command and tag substitution[2m > [22m[2mMUST handle empty tags gracefully
+[22m[39mInitiating SDB connection for device: test using system sdb
+Verifying SDB connection: sdb -s test shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s test shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb -s test shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb -s test shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Command and tag substitution[2m > [22m[2mMUST handle empty tags gracefully
+[22m[39m[SDB] Shell stream ready for user commands on test
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Process cleanup on disconnect[2m > [22m[2mMUST kill SDB process when disconnect_sdb is called
+[22m[39mFrontend connected: [90mundefined[39m
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Process cleanup on disconnect[2m > [22m[2mMUST kill SDB process when disconnect_sdb is called
+[22m[39mInitiating SDB connection for device: test using system sdb
+Verifying SDB connection: sdb -s test shell echo READY
+[SPAWN_AUDIT] [[SDB Connect/Check]] Running: "sdb -s test shell echo READY"
+SDB Check Passed! Device is ready.
+Spawning SDB session: sdb -s test shell
+[SPAWN_AUDIT] [[SDB Connect/Main]] Running: "sdb -s test shell"
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Process cleanup on disconnect[2m > [22m[2mMUST kill SDB process when disconnect_sdb is called
+[22m[39m[SDB] Shell stream ready for user commands on test
+
+[90mstdout[2m | test/sdb_connection.test.js[2m > [22m[2mSDB Connection Critical Path[2m > [22m[2m🟢 Process cleanup on disconnect[2m > [22m[2mMUST kill SDB process when disconnect_sdb is called
+[22m[39mSDB process killed by user
+
+ [32m✓[39m test/sdb_connection.test.js [2m([22m[2m11 tests[22m[2m)[22m[33m 672[2mms[22m[39m
+       [33m[2m✓[22m[39m MUST emit sdb_status with status:connected after successful device verification [33m 661[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m9 passed[39m[22m[90m (9)[39m
+[2m      Tests [22m [1m[32m76 passed[39m[22m[90m (76)[39m
+[2m   Start at [22m 02:26:08
+[2m   Duration [22m 2.95s[2m (transform 803ms, setup 2.38s, import 1.86s, tests 1.42s, environment 10.98s)[22m
+

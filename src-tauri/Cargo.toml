@@ -1,0 +1,23 @@
+[package]
+name = "happytool-tauri"
+version = "1.5.5"
+description = "HappyTool Light - High-Performance Log Analyzer (Tauri 2.0)"
+authors = ["granular.sim <granular.sim@samsung.com>"]
+edition = "2021"
+
+[lib]
+name = "happytool_tauri_lib"
+crate-type = ["staticlib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rfd = "0.15"
+arboard = "3"
+open = "5"
+serialport = "4"

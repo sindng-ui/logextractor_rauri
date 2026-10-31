@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HappyTool</title>
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self' app:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: app:; worker-src 'self' blob: app:; style-src 'self' 'unsafe-inline' app:; font-src 'self' data: app:; img-src 'self' data: app:; connect-src 'self' * ws://127.0.0.1:3000 ws://localhost:3000 ws://127.0.0.1:3003 ws://localhost:3003 http://127.0.0.1:3003 http://localhost:3003 app:;" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      background: #000000;
+      overflow: hidden;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #pre-loader {
+      position: fixed;
+      inset: 0;
+      background: #000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 99999;
+      pointer-events: none;
+    }
+
+    #pre-loader-ring {
+      width: 48px;
+      height: 48px;
+      border: 2px solid rgba(99, 102, 241, 0.15);
+      border-top-color: #818cf8;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="pre-loader">
+    <div id="pre-loader-ring"></div>
+  </div>
+
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
+</html>

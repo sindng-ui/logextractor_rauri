@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production & Build outputs
+dist/
+dist_bin/
+dist_electron/
+out_electron/
+build/windows/
+build/installer/
+
+# Rust / Tauri build artifacts
+target/
+src-tauri/target/
+src-wasm/target/
+src-tauri/gen/schemas/
+
+# Environment and local configs
+.env
+.env.local
+.env.*.local
+.npmrc.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS & Editor generated files
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# Vitest / Coverage
+coverage/
+.nyc_output/
+
+# Temporary / Scratch files
+*.tmp
+*.temp
+temp_*
