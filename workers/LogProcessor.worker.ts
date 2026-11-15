@@ -11,6 +11,12 @@ import { analyzePerfSegments, extractSourceMetadata } from '../utils/perfAnalysi
 import * as AnalysisHandlers from './workerAnalysisHandlers';
 import LogFilterSubWorker from './LogFilterSub.worker.ts?worker';
 import { mergeSortedUnique } from './workerUtils';
+import {
+    FilterCacheStore,
+    normalizeFilterSnapshot,
+    selectIncrementalFilterPlan,
+} from '../utils/incrementalFilter';
+import { executeIncrementalFilter } from './workerIncrementalFilter';
 
 const ctx: Worker = self as any;
 ctx.onerror = (e) => {
@@ -152,6 +158,7 @@ const sendSharedBuffers = () => {
 
 // Concurrency Control for filtering
 let currentFilterRequestId = 0;
+const filterCache = new FilterCacheStore();
 
 // Performance Heatmap & Timestamp Cache State
 let isCalculatingHeatmap = false;
@@ -269,6 +276,7 @@ const buildFileIndex = async (file: File) => {
     BookmarkManager.clearAll(); // Clear bookmarks for new file
     isCalculatingHeatmap = false; // Reset heatmap state for new file
     currentFilterRequestId++; // ✅ Cancel any pending filters from previous file
+    filterCache.clear();
 
     initSubWorkers(); // ✅ Spawn to proceed with WASM initialization in parallel (WASM Cold Start optimization)
 
@@ -359,6 +367,7 @@ const buildLocalFileIndex = async (path: string, size: number) => {
     BookmarkManager.clearAll();
     isCalculatingHeatmap = false;
     currentFilterRequestId++;
+    filterCache.clear();
 
     initSubWorkers(); // ✅ Spawn to proceed with WASM initialization in parallel (WASM Cold Start optimization)
 
@@ -445,6 +454,7 @@ const initStream = (payload?: { isLive?: boolean }) => {
     timestampCache = new Float64Array(MAX_LINES);
     lastFilterNotifyTime = 0;
     currentFilterRequestId++;
+    filterCache.clear();
     respond({ type: 'STATUS_UPDATE', payload: { status: 'loading', mode: 'stream' } });
     
     // 🐧 Hyungnim! Even if there's no data yet, the worker is ready, so we declare Ready immediately.
@@ -480,6 +490,9 @@ const processChunk = (chunk: string) => {
     }
 
     if (lines.length === 0) return;
+
+    // Clear stale incremental filter cache immediately when new live lines arrive
+    filterCache.clear();
 
     // ✅ Binary storage recording loop
     for (const line of lines) {
@@ -658,9 +671,114 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
         return;
     }
 
-    // --- High Performance Parallel Filtering (Common for File and Stream) ---
-    initSubWorkers();
+    // --- High Performance Parallel / Incremental Filtering (Common for File and Stream) ---
     const totalLines = isStreamMode ? streamLineCount : (lineOffsets ? lineOffsets.length : 0);
+    const filterSnapshot = normalizeFilterSnapshot(normalizedRule, currentQuickFilterVal);
+
+    const finalizeFilterMatches = (finalMatches: Int32Array, shouldRecordCache: boolean) => {
+        if (filterRequestId !== currentFilterRequestId) return;
+
+        if (shouldRecordCache && finalMatches.length <= MAX_LINES) {
+            filterCache.record({
+                snapshot: filterSnapshot,
+                rawMatchedIndices: finalMatches,
+                totalLines,
+            });
+        }
+
+        // --- Merge Bookmarks (Persistent Visualization) ---
+        const bookmarks = BookmarkManager.getOriginalBookmarksSorted();
+        const mergedMatches = mergeSortedUnique(finalMatches, bookmarks);
+
+        // ✅ Prevent Shared Buffer size overflow
+        const safeMatchCount = Math.min(mergedMatches.length, MAX_LINES);
+        filteredIndicesBuffer.set(mergedMatches.subarray(0, safeMatchCount));
+        filteredIndices = (filteredIndicesBuffer as any).subarray(0, safeMatchCount);
+
+        if (finalMatches.length > MAX_LINES) {
+            console.warn(`[Worker] Match count (${finalMatches.length}) exceeds SharedBuffer capacity (${MAX_LINES}). Truncating results.`);
+        }
+
+        // ✅ Order Fix: Send shared buffers BEFORE completing filtering notification
+        sendSharedBuffers();
+
+        respond({ type: 'STATUS_UPDATE', payload: { status: 'ready' } });
+        respond({
+            type: 'FILTER_COMPLETE', payload: {
+                matchCount: filteredIndices!.length,
+                totalLines: totalLines,
+                visualBookmarks: getVisualBookmarks()
+            }
+        });
+
+        if (timestampCache) {
+            calculateHistogram({
+                filteredIndices,
+                timestampCache,
+                respond,
+                currentFile,
+                lineOffsets,
+                isStreamMode
+            });
+        }
+    };
+
+    const fileSizeForPlan = isLocalFileMode ? localFileSize : (currentFile ? currentFile.size : 0);
+    const incrementalPlan = selectIncrementalFilterPlan({
+        cache: filterCache,
+        nextSnapshot: filterSnapshot,
+        totalLines,
+        isStreamMode,
+        isLocalFileMode,
+        lineOffsets,
+        fileSize: fileSizeForPlan,
+    });
+
+    if (incrementalPlan.mode !== 'full-scan') {
+        const candCount = incrementalPlan.sourceEntry?.rawMatchedIndices.length ?? 0;
+        const winInfo = incrementalPlan.windows
+            ? `, windows: ${incrementalPlan.windows.length}, read: ${((incrementalPlan.totalReadBytes || 0) / (1024 * 1024)).toFixed(2)}MB`
+            : '';
+        console.log(`[Worker] Incremental subset mode: ${incrementalPlan.mode} (candidates: ${candCount}/${totalLines}${winInfo})`);
+
+        try {
+            const incMatches = await executeIncrementalFilter({
+                plan: incrementalPlan,
+                normalizedRule,
+                currentQuickFilter,
+                totalLines,
+                isCancelled: () => filterRequestId !== currentFilterRequestId,
+                onProgress: (progress) => {
+                    if (filterRequestId === currentFilterRequestId) {
+                        respond({ type: 'STATUS_UPDATE', payload: { status: 'filtering', progress } });
+                    }
+                },
+                isStreamMode,
+                logBuffer,
+                lineOffsetsStream,
+                lineLengthsStream,
+                isLocalFileMode,
+                localFilePath,
+                localFileSize,
+                currentFile,
+                lineOffsets,
+                rpcCall,
+            });
+
+            if (filterRequestId !== currentFilterRequestId) return;
+            if (incMatches !== null) {
+                const incElapsedMs = performance.now() - filterStartTime;
+                console.log(`[Worker] Incremental filtering (${incrementalPlan.mode}) complete in ${incElapsedMs.toFixed(1)}ms. Matches: ${incMatches.length}`);
+                finalizeFilterMatches(incMatches, incrementalPlan.mode !== 'exact-cache');
+                return;
+            }
+        } catch (incErr) {
+            if (filterRequestId !== currentFilterRequestId) return;
+            console.warn('[Worker] Incremental filtering failed, falling back to full scan:', incErr);
+        }
+    }
+
+    initSubWorkers();
     console.log(`[Worker] Preparing filter for ${totalLines} lines (isStream: ${isStreamMode})`);
 
     const hasAliveSubWorkers = subWorkerPool.getActiveCount() > 0 && !subWorkerPool.isDisabled();
@@ -672,10 +790,12 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 
     const chunkResults: (Int32Array | null)[] = new Array(numChunks).fill(null);
     let completedChunks = 0;
+    let hasChunkFailure = false;
 
     const onChunkDone = (chunkId: number, matches: Int32Array | null, receivedRequestId: number) => {
         if (receivedRequestId !== filterRequestId || filterRequestId !== currentFilterRequestId) return;
 
+        if (matches === null) hasChunkFailure = true;
         chunkResults[chunkId] = matches;
         completedChunks++;
 
@@ -703,41 +823,7 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
                 }
             }
 
-            // --- Merge Bookmarks (Persistent Visualization) ---
-            const bookmarks = BookmarkManager.getOriginalBookmarksSorted();
-            const mergedMatches = mergeSortedUnique(finalMatches, bookmarks);
-
-            // ✅ Prevent Shared Buffer size overflow
-            const safeMatchCount = Math.min(mergedMatches.length, MAX_LINES);
-            filteredIndicesBuffer.set(mergedMatches.subarray(0, safeMatchCount));
-            filteredIndices = (filteredIndicesBuffer as any).subarray(0, safeMatchCount);
-
-            if (finalMatches.length > MAX_LINES) {
-                console.warn(`[Worker] Match count (${finalMatches.length}) exceeds SharedBuffer capacity (${MAX_LINES}). Truncating results.`);
-            }
-
-            // ✅ Order Fix: Send shared buffers BEFORE completing filtering notification
-            sendSharedBuffers();
-
-            respond({ type: 'STATUS_UPDATE', payload: { status: 'ready' } });
-            respond({
-                type: 'FILTER_COMPLETE', payload: {
-                    matchCount: filteredIndices!.length,
-                    totalLines: totalLines,
-                    visualBookmarks: getVisualBookmarks()
-                }
-            });
-
-            if (timestampCache) {
-                calculateHistogram({
-                    filteredIndices,
-                    timestampCache,
-                    respond,
-                    currentFile,
-                    lineOffsets,
-                    isStreamMode
-                });
-            }
+            finalizeFilterMatches(finalMatches, !hasChunkFailure);
         }
     };
 

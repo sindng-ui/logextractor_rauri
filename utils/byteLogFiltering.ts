@@ -298,8 +298,10 @@ const matchAsciiByteSlice = (
 };
 
 const hasByteInRange = (buf: Uint8Array, start: number, end: number, target: number): boolean => {
-    const found = buf.indexOf(target, start);
-    return found !== -1 && found < end;
+    for (let i = start; i < end; i++) {
+        if (buf[i] === target) return true;
+    }
+    return false;
 };
 
 const decodeSliceSafe = (decoder: TextDecoder, slice: Uint8Array): string => {
@@ -311,6 +313,35 @@ export interface ByteFilterChunkResult {
     matches: Int32Array;
     lineCount: number;
 }
+
+/**
+ * Evaluate a single line slice `[start, effectiveEnd)` (excluding trailing `\r`/`\n`)
+ * against a pre-compiled filter rule.
+ * Shared across full-chunk scanning and sparse incremental candidate re-filtering
+ * so both paths guarantee identical match semantics.
+ */
+export const matchByteSpan = (
+    buf: Uint8Array,
+    start: number,
+    effectiveEnd: number,
+    compiled: CompiledFilterRule,
+    decoder: TextDecoder = sharedDecoder,
+    chunkHasAnsi?: boolean
+): boolean => {
+    if (compiled.isEmpty) return true;
+
+    const mightHaveAnsi = chunkHasAnsi === undefined ? hasByteInRange(buf, start, effectiveEnd, 0x1b) : (chunkHasAnsi && hasByteInRange(buf, start, effectiveEnd, 0x1b));
+
+    if (!compiled.canUseAsciiByteScan || mightHaveAnsi) {
+        let line = decodeSliceSafe(decoder, buf.subarray(start, effectiveEnd));
+        if (mightHaveAnsi) {
+            line = line.replace(ANSI_ESCAPE_REGEX, '');
+        }
+        return matchCompiledLine(line, compiled);
+    }
+
+    return matchAsciiByteSlice(buf, start, effectiveEnd, compiled);
+};
 
 /**
  * Filter a raw UTF-8 chunk buffer into matching original line indices.
@@ -347,15 +378,7 @@ export const filterByteBuffer = (
             const rawEnd = nl === -1 ? len : nl;
             const effectiveEnd = rawEnd > pos && buf[rawEnd - 1] === 13 ? rawEnd - 1 : rawEnd;
 
-            let isMatch: boolean;
-            if (chunkHasAnsi && hasByteInRange(buf, pos, effectiveEnd, 0x1b)) {
-                const decoded = decodeSliceSafe(decoder, buf.subarray(pos, effectiveEnd)).replace(ANSI_ESCAPE_REGEX, '');
-                isMatch = matchCompiledLine(decoded, compiled);
-            } else {
-                isMatch = matchAsciiByteSlice(buf, pos, effectiveEnd, compiled);
-            }
-
-            if (isMatch) {
+            if (matchByteSpan(buf, pos, effectiveEnd, compiled, decoder, chunkHasAnsi)) {
                 matches.push(offset + relIdx);
             }
             relIdx++;

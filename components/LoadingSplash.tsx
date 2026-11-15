@@ -153,7 +153,12 @@ const LoadingSplash: React.FC<LoadingSplashProps> = ({ onLoadingComplete, waitFo
                             <h1 className="text-6xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
                                 HappyTool
                             </h1>
-                            <p className="text-slate-500 text-sm mt-3 font-mono">v{packageJson.version}</p>
+                            <div className="mt-3 flex items-center justify-center gap-2 font-mono text-sm">
+                                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-400/30 text-amber-300 text-xs font-semibold tracking-wider uppercase">
+                                    Tauri App
+                                </span>
+                                <span className="text-slate-500">v{packageJson.version}</span>
+                            </div>
                         </div>
                     </div>
 

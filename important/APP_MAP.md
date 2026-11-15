@@ -22,7 +22,7 @@
 - **Core Interface**:
   - `AppContent`: 전역 상태(Settings, Plugin 등) 관리의 핵심 컴포넌트
   - `HappyToolProvider`: 전역 Context 공급
-  - `LoadingSplash`: **터미널 스타일(Terminal Style)**의 실시간 시스템 로그 배경이 적용된 프리미엄 로딩 화면. 폰트 크기 최적화(`text-2xl`)를 통해 시작 로그의 가독성과 노출량을 극대화함. [UPDATED]
+  - `LoadingSplash`: **터미널 스타일(Terminal Style)**의 실시간 시스템 로그 배경이 적용된 프리미엄 로딩 화면. 폰트 크기 최적화(`text-2xl`)를 통해 시작 로그의 가독성과 노출량을 극대화하고, 로고 하단에 `Tauri App` 배지 및 버전을 함께 표기함. [UPDATED]
 - **Startup UX Optimization**:
   - `Fake Progress`: 서버 기동 시 0->95%까지 서서히 증가하여 대기 시간 시각화 (`main.cjs`)
   - `Progress Creep`: 플러그인 로드 대기 시 98->99.9%까지 점진적으로 증가하여 활동성 확보 (`LoadingSplash.tsx`)
@@ -96,8 +96,10 @@
   - `Main Logic`: [useLogExtractorLogic.ts](./hooks/useLogExtractorLogic.ts)
   - `Worker`: [LogProcessor.worker.ts](./workers/LogProcessor.worker.ts) (중앙 제어)
   - `Filter Executor`: [workerFilterExecutor.ts](./workers/workerFilterExecutor.ts) (서브워커 풀 관리, `CHUNK_ACK` 워치독 및 메인 워커 `File`/Blob 바이트 폴백 실행기) [UPDATED]
+  - `Incremental Executor`: [workerIncrementalFilter.ts](./workers/workerIncrementalFilter.ts) (증분 후보군 희소 바이트 윈도우 병렬 읽기 및 스트림 후보 라인 재필터링 실행기) [NEW]
   - `Filter Sub`: [LogFilterSub.worker.ts](./workers/LogFilterSub.worker.ts) (`blob.arrayBuffer()` + BMH UTF-8 바이트 스캔 기반 병렬 필터링 및 `SUBWORKER_READY`/`CHUNK_ACK` 핸드셰이크) [UPDATED]
-  - `Byte Filter`: [byteLogFiltering.ts](./utils/byteLogFiltering.ts) (사전 컴파일 룰 기반 Boyer-Moore-Horspool 무변환 바이트 스캔 & ANSI/비ASCII 폴백) [NEW]
+  - `Byte Filter`: [byteLogFiltering.ts](./utils/byteLogFiltering.ts) (사전 컴파일 룰 기반 Boyer-Moore-Horspool 무변환 바이트 스캔, 단일 라인 `matchByteSpan` 공용 헬퍼 & ANSI/비ASCII 폴백) [UPDATED]
+  - `Incremental Planner`: [incrementalFilter.ts](./utils/incrementalFilter.ts) (`isStrictNarrowingSnapshot` 부분집합 판정, `FilterCacheStore` 멀티-스텝 LRU 캐시 및 `coalesceCandidateWindows` 바이트 윈도우 병합기) [NEW]
   - `WASM Engine`: [src-wasm/](./src-wasm/)
   - `Data Reader`: [workerDataReader.ts](./workers/workerDataReader.ts)
 - **Core Interface**:
@@ -110,6 +112,7 @@
   - `빈 룰 로그 실종 완전 진압 & 깜빡임 제로 동기화 가드 완성 (v8)`: 최초 인덱싱 완료(`INDEX_COMPLETE`) 시점에 `filteredCount`를 즉시 전체 라인 수로 초기 세팅하는 기반 위에, 빈 룰 적용 시 워커로의 `FILTER_LOGS` 디스패치를 전면 유지하여 SharedArrayBuffer 동기화를 100% 보장함으로써 탭 전환/파일 재오픈 시의 먹통 실종 버그를 완전 소탕하고, 동시에 `setWorkerReady(false)` 로딩창 강등만 영리하게 차단하여 단 1프레임의 깜빡임 jank도 허용하지 않는 궁극의 60fps 무결성을 마침내 달성함. [UPDATED][HOT]
   - `필터 유틸 최종 2중 방어가드 수립 & 빈 문자열 감지 보완`: 만에 하나 병렬 서브워커(`LogFilterSub.worker.ts`) 필터링으로 우회하더라도, 필터 조건이 아예 없는 빈 룰 상태(신규 미션의 `[['']]` 같은 가짜 빈 콤보 포함)라면 `checkIsMatch` 매칭 함수 초입부에서 실질 키워드가 없는 빈 룰임을 100% 탐색하여 0.0001초 만에 `true` (무조건 통과)를 즉시 리턴하도록 최종 초광속 가드를 고도화 수립하여 WASM 오작동 오매칭을 원천 차단함. [UPDATED][HOT]
   - `서브워커 ACK 워치독 & Main Worker Blob 폴백 복구 (Processing 멈춤 원천 해결)`: Tauri WebView2 환경 등에서 중첩 서브워커(`LogFilterSub.worker.ts`)가 스폰/실행 지연되거나 에러/중단되더라도 필터가 `Processing log...`에서 영구 대기하지 않도록 `workerFilterExecutor.ts`의 `SubWorkerPool`과 `CHUNK_ACK` 2000ms 워치독 및 즉시 복구 핸들러를 구축하고, 기존에 누락되어 있던 Main Worker `currentFile` (`Blob.arrayBuffer()`) 폴백과 0라인 청크 즉시 완료, WASM `FilterEngine.free()` + 2500ms 로드 타임아웃/JS 폴백을 적용함. [NEW][HOT]
+  - `증분 모수 축소 필터링 (Incremental Subset Narrowing & Multi-Step LRU 캐시)`: Happy Combo 브랜치 확장(`input` → `input + start` → `input + start + process`), BlockList 단어 추가, QuickFilter 강화 등 수학적 부분집합(`isStrictNarrowingSnapshot`) 조건일 때 1GB 전체 스캔 대신 북마크 합치기 전 순수 매칭 캐시(`FilterCacheStore`, 최대 5단계·250만 인덱스 상한)에서 가장 작은 부모 후보군만 선택해 인접 바이트 윈도우(`coalesceCandidateWindows`)로 묶어 병렬 재검사함. 직전 0건 즉시 단축, 동일 룰 백트래킹 `exact-cache` 재사용, 25% 초과 고밀도/확장 변경·`MAX_LINES` 절삭·라인 수 변경 시 전체 스캔 자동 안전 폴백 포함. [NEW][HOT]
   - `해피콤보 빈 룰 로그 0.1초 실종 타이밍 버그 완전 진압 및 캐시 가드 복원 (v10)`: 빈 룰 시 무조건 필터싱크를 쏘는 가드 우회로 인해 발생하던 0.1초 중복 워커 갱신 및 lineCount=0 엇박자 실종 버그를 종식시키기 위해, 가드 우회를 완전히 제거하고 순수 해시 캐시 비교 가드를 완벽 복원하여 중복 워커 갱신을 차단하고 0.1초 실종 버그를 완벽 진압함. [UPDATED][HOT]
   - `로그 레벨 색상 & 토글 0ms 즉각 반영 동기화 가드 및 Opacity % 실시간 연동 (HyperLogRenderer.tsx)`: 사용자가 퀵 제어 창(Log Center)에서 로그 레벨 체크박스를 토글하거나 컬러 피커로 색을 바꾸었을 때, 기존에 렌더러 캐시(`cachedLines`)에 저장되어 있던 로그 라인들의 `levelColor`를 0ms 즉각 재평가하여 루프 갱신하는 2중 동기화 가드 장착. 동시에 캔버스 배경 레이어(Background Layer) 렌더링 루프 내에 `logLevelOpacity` 실시간 연동 로직을 추가하고, 대소문자 무관 컬러 매칭 가드(`m.color.toLowerCase() === lineData.levelColor.toLowerCase()`) 및 최하단 `useLayoutEffect` 에 `preferences?.logLevelOpacity` 동기 가드를 3중 장착하여 슬라이더 변경 즉시 메인 로그 화면의 은은한 배경 투명도가 껌벅임 없이 0ms 만에 부드럽고 정확하게 물들도록 완벽한 60fps 무결성 반응성을 완성함. [UPDATED][HOT]
 
