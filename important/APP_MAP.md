@@ -174,6 +174,7 @@
 - **Keywords**: [`Happy Combo`, `Configuration`, `Sticky Header`, `Search Filter`, `Quick Add`, `Collapse All`]
 - **Location**:
   - `Section`: [HappyComboSection.tsx](./components/LogViewer/ConfigSections/HappyComboSection.tsx)
+  - `Draft Card`: [DraftComboCard.tsx](./components/LogViewer/ConfigSections/DraftComboCard.tsx) (루트·`+ tag`·`Add Branch` 전체 기본 세트 로컬 드래프트 카드) [NEW]
   - `Panel`: [ConfigurationPanel.tsx](./components/LogViewer/ConfigurationPanel.tsx)
   - `Quick Command`: [QuickCommandSection.tsx](./components/LogViewer/ConfigSections/QuickCommandSection.tsx) [UPDATED]
 - **Features**:
@@ -184,7 +185,7 @@
   - **Reliable Quick Command Storage**: `contentEditable` 환경에서의 비동기 상태 불일치 문제를 해결하기 위해 DOM 직접 참조 방식의 저장 엔진 적용. 한국어 IME 및 렌더링 지연 상황에서도 완벽한 저장 보장. [HOT][FIX]
   - **Global Config Tab Sync**: Configuration 패널의 Settings/Commands 탭 상태를 전역 컨텍스트로 관리하여, 여러 로그 탭을 오갈 때도 선택 상태가 초기화되지 않고 완벽하게 동기화됨. [NEW][HOT]
   - **탭 전환 단축키 (Ctrl + Shift + Z)**: 설정(Settings) 탭과 커맨드(Commands) 탭 간의 빠른 전환을 위한 단축키로, 한글 IME 입력기 상태(`ㅋ`)에서도 키 감지 누락이 전혀 없도록 물리적 키 코드(`e.code === 'KeyZ'`) 기반으로 완벽한 예외 처리가 장착됨. 특히 멀티 탭 환경에서 백그라운드 탭 리스너들과 단축키 토글 상태가 충돌(토글 취소 현상)하지 않도록 현재 활성화된 Active 탭에서만 이벤트가 동작하도록 차단하는 `isActive` 예외 처리가 적용되어 100% 안전함. [HOT][FIX]
-  - **빈 콤보 드래프트 생성 (NewRoot 제거 & 불필요한 검색 방지)**: `ADD COMBO` / `Create New Combo Group` 클릭 시 기본 `'NewRoot'` 단어를 자동 삽입해 대용량 필터링(`Processing log...`)이 즉시 도는 문제를 제거함. 로컬 드래프트 입력 상태(`isCreatingRoot` + 빈 입력창)로 먼저 추가하고, 사용자가 실제 키워드를 입력해 확정(`Enter` / `Tab` / non-empty `onBlur`)한 순간에만 `updateCurrentRule`로 필터링을 실행함. [NEW][HOT]
+  - **풀 세트 콤보 드래프트 생성 (NewRoot 제거 & 추가 시 무검색)**: `ADD COMBO` / `Create New Combo Group` 클릭 시 `NewRoot` 자동 검색 없이 [DraftComboCard.tsx](./components/LogViewer/ConfigSections/DraftComboCard.tsx) 를 통해 기존과 동일한 콤보 기본 세트(루트 입력, `+` 브랜치 추가, `+ tag`, `Add Branch` 트리 전체 UI)가 즉시 표시됨. 드래프트 상태에서 루트·멀티 브랜치/태그를 모두 구성할 때까지 검색이 시작되지 않으며, 체크박스/루트 `Enter`/빈 `+ tag` `Enter`/카드 바깥 포커스 이탈 시에만 일괄 확정되어 필터링을 실행함. [UPDATED][HOT]
 
 ### [[NetTraffic Analyzer]] 🐧⚡ [CORE]
 - **ID**: `NET_TRAFFIC_ANALYZER`

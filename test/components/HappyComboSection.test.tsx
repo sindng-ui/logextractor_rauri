@@ -110,4 +110,61 @@ describe('HappyComboSection', () => {
             ],
         });
     });
+
+    it('renders full combo basic set (+ tag and Add Branch) on ADD COMBO and allows configuring branches before triggering search', () => {
+        const updateCurrentRule = vi.fn();
+
+        render(
+            <HappyComboSection
+                currentConfig={createBaseRule()}
+                updateCurrentRule={updateCurrentRule}
+                groupedRoots={[]}
+                collapsedRoots={new Set()}
+                onToggleRootCollapse={vi.fn()}
+                handleToggleRoot={vi.fn()}
+                happyCombosCaseSensitive={false}
+                tabId="tab-1"
+                setCollapsedRoots={vi.fn()}
+            />
+        );
+
+        fireEvent.click(screen.getByText('ADD COMBO'));
+
+        // Full combo basic set UI is immediately visible without triggering search
+        const rootInput = screen.getByPlaceholderText('Enter keyword...') as HTMLInputElement;
+        const firstTagInput = screen.getByPlaceholderText('+ tag') as HTMLInputElement;
+        const addBranchBtn = screen.getByText('Add Branch');
+
+        expect(rootInput).toBeInTheDocument();
+        expect(firstTagInput).toBeInTheDocument();
+        expect(addBranchBtn).toBeInTheDocument();
+        expect(updateCurrentRule).not.toHaveBeenCalled();
+
+        // Enter root + Tab + branch tags without triggering premature searches
+        fireEvent.change(rootInput, { target: { value: 'input' } });
+        fireEvent.keyDown(rootInput, { key: 'Tab' });
+        fireEvent.change(firstTagInput, { target: { value: 'start' } });
+        fireEvent.keyDown(firstTagInput, { key: 'Enter' });
+        fireEvent.change(firstTagInput, { target: { value: 'process' } });
+        fireEvent.keyDown(firstTagInput, { key: 'Enter' });
+
+        // Add second OR branch inside draft card
+        fireEvent.click(addBranchBtn);
+        const tagInputs = screen.getAllByPlaceholderText('+ tag') as HTMLInputElement[];
+        expect(tagInputs).toHaveLength(2);
+        fireEvent.change(tagInputs[1], { target: { value: 'touch' } });
+
+        // Still not committed yet until user submits!
+        expect(updateCurrentRule).not.toHaveBeenCalled();
+
+        // Submit from empty first branch + tag or root Enter
+        fireEvent.keyDown(tagInputs[0], { key: 'Enter' });
+        expect(updateCurrentRule).toHaveBeenCalledTimes(1);
+        expect(updateCurrentRule).toHaveBeenCalledWith({
+            happyGroups: [
+                expect.objectContaining({ tags: ['input', 'start', 'process'], enabled: true }),
+                expect.objectContaining({ tags: ['input', 'touch'], enabled: true }),
+            ],
+        });
+    });
 });
