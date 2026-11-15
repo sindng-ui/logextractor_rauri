@@ -133,7 +133,14 @@ const LogViewerPane = React.memo(forwardRef<LogViewerHandle, LogViewerPaneProps>
     }), []);
 
     const scrollHook = useLogViewerScroll({
-        totalMatches, workerReady, initialScrollIndex, absoluteOffset, fileName, onSyncScroll, callbacks
+        totalMatches,
+        workerReady,
+        initialScrollIndex,
+        absoluteOffset,
+        fileName,
+        isStreamMode: !!(sharedBuffers && sharedBuffers.isStreamMode),
+        onSyncScroll,
+        callbacks
     });
 
     const selectionHook = useLogViewerSelection({

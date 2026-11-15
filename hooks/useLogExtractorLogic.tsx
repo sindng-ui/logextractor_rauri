@@ -274,6 +274,17 @@ export const useLogExtractorLogic = ({
     // --- State: Log Histogram Panel Toggle ---
     const [isHistogramOpen, setIsHistogramOpen] = useState(false);
 
+    // Lazily request histogram calculation only when the histogram panel is opened
+    useEffect(() => {
+        if (!isHistogramOpen) return;
+        if (leftWorkerReady && leftWorkerRef.current) {
+            leftWorkerRef.current.postMessage({ type: 'REQUEST_HISTOGRAM' });
+        }
+        if (isDualView && rightWorkerReady && rightWorkerRef.current) {
+            rightWorkerRef.current.postMessage({ type: 'REQUEST_HISTOGRAM' });
+        }
+    }, [isHistogramOpen, leftWorkerReady, rightWorkerReady, isDualView]);
+
     // Segmentation Derived Values (Left)
     const leftTotalSegments = Math.ceil(leftFilteredCount / MAX_SEGMENT_SIZE) || 1;
     const leftCurrentSegmentLines = Math.min(MAX_SEGMENT_SIZE, Math.max(0, leftFilteredCount - (leftSegmentIndex * MAX_SEGMENT_SIZE)));
@@ -609,7 +620,10 @@ export const useLogExtractorLogic = ({
                 }
                 setLeftSegmentIndex(0);
                 leftViewerRef.current?.scrollTo(0);
-                if (setClearCacheTick) setClearCacheTick(prev => prev + 1);
+                // Preserve initial visible line fetch right after INDEX_COMPLETE when rule is empty
+                if (!(isInitialApply && isEmptyRule) && setClearCacheTick) {
+                    setClearCacheTick(prev => prev + 1);
+                }
 
                 console.log('[PINGU-DEBUG-APPLY] Left FILTER_LOGS dispatching. isEmptyRule:', isEmptyRule);
                 leftWorkerRef.current?.postMessage({
@@ -671,7 +685,9 @@ export const useLogExtractorLogic = ({
                 }
                 setRightSegmentIndex(0);
                 rightViewerRef.current?.scrollTo(0);
-                if (setClearCacheTick) setClearCacheTick(prev => prev + 1);
+                if (!(isInitialApply && isEmptyRule) && setClearCacheTick) {
+                    setClearCacheTick(prev => prev + 1);
+                }
 
                 console.log('[PINGU-DEBUG-APPLY] Right FILTER_LOGS dispatching. isEmptyRule:', isEmptyRule);
                 rightWorkerRef.current?.postMessage({

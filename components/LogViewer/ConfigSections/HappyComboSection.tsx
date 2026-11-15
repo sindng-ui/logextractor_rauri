@@ -47,8 +47,13 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
 
     // Ref to handle auto-focus on new branch creation
     const pendingBranchFocus = useRef<{ rootIdx: number, branchIdx: number } | null>(null);
-    // Ref to handle auto-focus on new root creation
-    const pendingRootFocus = useRef<string | null>(null);
+    // Ref to handle auto-focus on new root branch input after Tab-commit
+    const pendingNewRootBranchRef = useRef<string | null>(null);
+    // Draft state for adding a new empty root combo without triggering premature filtering
+    const [isCreatingRoot, setIsCreatingRoot] = useState(false);
+    const [draftRootName, setDraftRootName] = useState('');
+    const draftRootInputRef = useRef<HTMLInputElement>(null);
+    const draftCommittedRef = useRef(false);
 
     // ✅ Suggestions logic for Alias
     const [focusedAliasId, setFocusedAliasId] = useState<string | null>(null);
@@ -85,19 +90,55 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
         setCollapsedRoots(new Set());
     };
 
+    useEffect(() => {
+        setIsCreatingRoot(false);
+        setDraftRootName('');
+        draftCommittedRef.current = false;
+    }, [tabId]);
+
+    useEffect(() => {
+        if (isCreatingRoot && draftRootInputRef.current) {
+            draftRootInputRef.current.focus();
+            draftRootInputRef.current.scrollIntoView?.({ block: 'nearest' });
+        }
+    }, [isCreatingRoot]);
+
     const handleCreateNewRoot = () => {
-        let newName = 'NewRoot';
-        let counter = 1;
-        const existing = new Set(groupedRoots.map(g => g.root));
-        while (existing.has(newName)) { newName = `NewRoot (${counter++})`; }
+        if (searchTerm) setSearchTerm('');
+        if (isCreatingRoot) {
+            draftRootInputRef.current?.focus();
+            draftRootInputRef.current?.scrollIntoView?.({ block: 'nearest' });
+            return;
+        }
+        draftCommittedRef.current = false;
+        setDraftRootName('');
+        setIsCreatingRoot(true);
+    };
+
+    const cancelDraftRoot = () => {
+        draftCommittedRef.current = false;
+        setIsCreatingRoot(false);
+        setDraftRootName('');
+    };
+
+    const commitDraftRoot = (focusBranchAfterCommit = false) => {
+        const trimmed = draftRootName.trim();
+        if (!trimmed) return;
+        if (draftCommittedRef.current) return;
+        draftCommittedRef.current = true;
 
         if (currentConfig.happyGroups) {
             const newId = Math.random().toString(36).substring(7);
-            updateCurrentRule({ happyGroups: [...currentConfig.happyGroups, { id: newId, tags: [newName], enabled: true }] });
+            updateCurrentRule({ happyGroups: [...currentConfig.happyGroups, { id: newId, tags: [trimmed], enabled: true }] });
         } else {
-            updateCurrentRule({ includeGroups: [...currentConfig.includeGroups, [newName]] });
+            updateCurrentRule({ includeGroups: [...currentConfig.includeGroups, [trimmed]] });
         }
-        pendingRootFocus.current = newName;
+
+        if (focusBranchAfterCommit) {
+            pendingNewRootBranchRef.current = trimmed;
+        }
+        setIsCreatingRoot(false);
+        setDraftRootName('');
     };
 
     useEffect(() => {
@@ -110,14 +151,17 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
             }
         }
 
-        if (pendingRootFocus.current) {
-            // Find the root that matches the name
-            if (groupedRoots.some(g => g.root === pendingRootFocus.current)) {
-                setEditingTarget({ groupIdx: -1, termIdx: -1, isActive: true, value: pendingRootFocus.current });
-                pendingRootFocus.current = null;
+        if (pendingNewRootBranchRef.current) {
+            const targetRootIdx = groupedRoots.findIndex(g => g.root === pendingNewRootBranchRef.current);
+            if (targetRootIdx > -1) {
+                const firstBranchPlusInput = document.querySelector(`input[data-add-tag="hc-${tabId}-${targetRootIdx}-0"]`) as HTMLInputElement;
+                if (firstBranchPlusInput) {
+                    firstBranchPlusInput.focus();
+                }
+                pendingNewRootBranchRef.current = null;
             }
         }
-    }, [groupedRoots]);
+    }, [groupedRoots, tabId]);
 
     // Helper to update groups
     const handleUpdateGroup = (originalIdx: number, newGroup: string[], isActive: boolean, id?: string, alias?: string) => {
@@ -639,26 +683,66 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
                         </div>
                     );
                 })}
+                {isCreatingRoot && (
+                    <div className="glass rounded-2xl p-4 relative group border border-indigo-500/40 z-10">
+                        <div className="flex items-center gap-3 relative z-10">
+                            <input
+                                type="checkbox"
+                                checked={false}
+                                disabled
+                                className="accent-indigo-500 w-4 h-4 opacity-40 cursor-not-allowed"
+                                title="Enter a keyword to activate combo"
+                            />
+                            <FolderOpen size={14} className="text-indigo-400 shrink-0" />
+                            <input
+                                ref={draftRootInputRef}
+                                autoFocus
+                                type="text"
+                                value={draftRootName}
+                                placeholder="Enter keyword..."
+                                onChange={(e) => setDraftRootName(e.target.value)}
+                                onBlur={() => {
+                                    if (draftRootName.trim()) {
+                                        commitDraftRoot(false);
+                                    }
+                                }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        if (draftRootName.trim()) {
+                                            commitDraftRoot(false);
+                                        }
+                                    } else if (e.key === 'Tab' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        if (draftRootName.trim()) {
+                                            commitDraftRoot(true);
+                                        }
+                                    } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        cancelDraftRoot();
+                                    }
+                                }}
+                                className="bg-indigo-900/50 text-indigo-100 placeholder-slate-500 px-3 py-1 rounded-lg text-sm font-bold border border-indigo-500/50 outline-none shadow-lg min-w-[140px] flex-1"
+                            />
+                            <IconButton
+                                variant="ghost"
+                                size="sm"
+                                icon={<X size={14} />}
+                                title="Cancel"
+                                className="ml-auto text-slate-500 hover:text-red-400"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={cancelDraftRoot}
+                            />
+                        </div>
+                    </div>
+                )}
             </div>
 
             <Button
                 variant="outline"
                 className="w-full mt-4 h-10 border border-dashed border-slate-700 rounded-xl text-slate-500 hover:bg-slate-800 hover:border-indigo-500/50 hover:text-indigo-300 transition-all hover:shadow-lg hover:shadow-indigo-900/10 group"
                 icon={<Plus size={16} className="group-hover:text-indigo-400" />}
-                onClick={() => {
-                    let newName = 'NewRoot';
-                    let counter = 1;
-                    const existing = new Set(groupedRoots.map(g => g.root));
-                    while (existing.has(newName)) { newName = `NewRoot (${counter++})`; }
-
-                    if (currentConfig.happyGroups) {
-                        const newId = Math.random().toString(36).substring(7);
-                        updateCurrentRule({ happyGroups: [...currentConfig.happyGroups, { id: newId, tags: [newName], enabled: true }] });
-                    } else {
-                        updateCurrentRule({ includeGroups: [...currentConfig.includeGroups, [newName]] });
-                    }
-                    pendingRootFocus.current = newName;
-                }}
+                onClick={handleCreateNewRoot}
             >
                 Create New Combo Group
             </Button>

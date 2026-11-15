@@ -43,38 +43,20 @@ const initWasm = async () => {
 initWasm();
 
 // --- Parallelism: Worker Pool for Heavy Filtering ---
+import { SubWorkerPool, computeFilterStrategy, runParallelFilterChunks } from './workerFilterExecutor';
+
 const numSubWorkers = Math.max(1, (navigator.hardwareConcurrency || 4) - 1);
-const subWorkers: Worker[] = [];
+const subWorkerPool = new SubWorkerPool(numSubWorkers, () => new LogFilterSubWorker());
 let isTabActive = true; // ✅ Tracks current tab active state
 
 // Sub-workers only terminate when the tab becomes inactive (SET_ACTIVE_STATE).
 
 const terminateSubWorkers = () => {
-    if (subWorkers.length === 0) return;
-    console.log('[Worker] Terminating sub-workers (tab inactive).');
-    subWorkers.forEach(sw => sw.terminate());
-    subWorkers.length = 0;
+    subWorkerPool.terminateAll();
 };
 
 const initSubWorkers = () => {
-    if (!isTabActive) {
-        console.log('[Worker] Tab is inactive. Skipping sub-worker spawn.');
-        return;
-    }
-    if (subWorkers.length > 0) {
-        console.log(`[Worker] Using existing ${subWorkers.length} sub-workers`);
-        return;
-    }
-    console.log(`[Worker] Spawning ${numSubWorkers} sub-workers...`);
-    for (let i = 0; i < numSubWorkers; i++) {
-        try {
-            const sw = new LogFilterSubWorker();
-            sw.onerror = (e) => console.error(`[Worker] SubWorker ${i} error:`, e);
-            subWorkers.push(sw);
-        } catch (e) {
-            console.error('[Worker] Failed to spawn sub-worker', i, e);
-        }
-    }
+    subWorkerPool.init(isTabActive);
 };
 
 // File Mode
@@ -171,8 +153,9 @@ const sendSharedBuffers = () => {
 // Concurrency Control for filtering
 let currentFilterRequestId = 0;
 
-// Performance Heatmap State
+// Performance Heatmap & Timestamp Cache State
 let isCalculatingHeatmap = false;
+let isBuildingTimestampCache = false;
 
 // --- Constants ---
 const CHUNK_SIZE = 10 * 1024 * 1024;
@@ -277,6 +260,9 @@ const rpcCall = (method: string, args: any): Promise<any> => {
 // --- Handler: File Indexing ---
 const buildFileIndex = async (file: File) => {
     isStreamMode = false;
+    isLocalFileMode = false;
+    localFilePath = null;
+    localFileSize = 0;
     isLiveStream = false;
     currentFile = file;
     // streamLines = []; // Clear stream data - REMOVED
@@ -357,34 +343,9 @@ const buildFileIndex = async (file: File) => {
     respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress: 100 } });
     respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineCount } });
 
-    // Background timestamp cache building
-    timestampCache = null; // Reset
-    buildTimestampCache({
-        currentFile,
-        lineOffsets,
-        filteredIndices,
-        isStreamMode,
-        isLocalFileMode,
-        localFilePath,
-        localFileSize,
-        rpcCall,
-        respond,
-        timestampCache,
-        setTimestampCache: (cache) => { timestampCache = cache; }
-    }).then((cache) => {
-        timestampCache = cache;
-        console.log(`[Worker] Timestamp cache built: ${cache ? cache.length : 0} lines`);
-        calculateHistogram({
-            filteredIndices,
-            timestampCache,
-            respond,
-            currentFile,
-            lineOffsets,
-            isStreamMode
-        });
-    }).catch(err => {
-        console.error('[Worker] buildTimestampCache failed', err);
-    });
+    // Reset timestamp cache; built lazily on demand when histogram panel is opened
+    timestampCache = null;
+    isBuildingTimestampCache = false;
 };
 
 // --- Handler: Local File Indexing (RPC 2GB+ OOM Free) ---
@@ -460,34 +421,9 @@ const buildLocalFileIndex = async (path: string, size: number) => {
     respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress: 100 } });
     respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineCount } });
 
-    // Background timestamp cache building
-    timestampCache = null; // Reset
-    buildTimestampCache({
-        currentFile,
-        lineOffsets,
-        filteredIndices,
-        isStreamMode,
-        isLocalFileMode,
-        localFilePath,
-        localFileSize,
-        rpcCall,
-        respond,
-        timestampCache,
-        setTimestampCache: (cache) => { timestampCache = cache; }
-    }).then((cache) => {
-        timestampCache = cache;
-        console.log(`[Worker] Timestamp cache built (Local): ${cache ? cache.length : 0} lines`);
-        calculateHistogram({
-            filteredIndices,
-            timestampCache,
-            respond,
-            currentFile,
-            lineOffsets,
-            isStreamMode
-        });
-    }).catch(err => {
-        console.error('[Worker] buildTimestampCache (Local) failed', err);
-    });
+    // Reset timestamp cache; built lazily on demand when histogram panel is opened
+    timestampCache = null;
+    isBuildingTimestampCache = false;
 };
 
 // --- Handler: Stream Init ---
@@ -660,9 +596,17 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 
     // ✅ Sync WASM Engine keywords for the main worker (for getLines etc)
     if (wasmEngine && wasmModule) {
-        wasmEngine = new wasmModule.FilterEngine(isHappyCase);
-        const allKeywords = normalizedRule.includeGroups.flat();
-        wasmEngine.update_keywords(allKeywords);
+        try {
+            if (typeof wasmEngine.free === 'function') {
+                wasmEngine.free();
+            }
+            wasmEngine = new wasmModule.FilterEngine(isHappyCase);
+            const allKeywords = normalizedRule.includeGroups.flat();
+            wasmEngine.update_keywords(allKeywords);
+        } catch (err) {
+            console.warn('[Worker] Failed to sync main WASM FilterEngine; falling back to JS matching:', err);
+            wasmEngine = null;
+        }
     }
 
     // Optimization for empty rule (Both File and Stream modes)
@@ -672,19 +616,26 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
         
         console.log(`[Worker-Debug] 🚀 Dynamic Empty rule bypass TRIGGERED! safeMatchCount: ${safeMatchCount}, totalLines: ${lineCount}`);
         
-        // 🐧 형님! 최초 인덱싱 당시의 완벽한 룰에 맞춰 filteredIndices와 공유 버퍼를 동일하게 초기화 복원합니다!
-        if (lineCount <= filteredIndicesBuffer.length) {
-            for (let i = 0; i < lineCount; i++) {
-                filteredIndicesBuffer[i] = i;
+        // 🐧 형님! 최초 인덱싱 당시 이미 filteredIndices가 전체 라인으로 초기화된 상태라면 수천만 번의 중복 루프를 건너뜁니다!
+        const isAlreadyIdentityInitialized =
+            filteredIndices !== null &&
+            filteredIndices.length === lineCount &&
+            (lineCount === 0 || (filteredIndices[0] === 0 && filteredIndices[lineCount - 1] === lineCount - 1));
+
+        if (!isAlreadyIdentityInitialized) {
+            if (lineCount <= filteredIndicesBuffer.length) {
+                for (let i = 0; i < lineCount; i++) {
+                    filteredIndicesBuffer[i] = i;
+                }
+                filteredIndices = (filteredIndicesBuffer as any).subarray(0, lineCount);
+            } else {
+                // 대용량 파일 대응 Fallback
+                const all = new Int32Array(lineCount);
+                for (let i = 0; i < lineCount; i++) {
+                    all[i] = i;
+                }
+                filteredIndices = all as any;
             }
-            filteredIndices = (filteredIndicesBuffer as any).subarray(0, lineCount);
-        } else {
-            // 대용량 파일 대응 Fallback
-            const all = new Int32Array(lineCount);
-            for (let i = 0; i < lineCount; i++) {
-                all[i] = i;
-            }
-            filteredIndices = all as any;
         }
 
         // Notify UI about shared buffers structure
@@ -693,14 +644,16 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
         respond({ type: 'FILTER_COMPLETE', payload: { matchCount: safeMatchCount, totalLines: lineCount, visualBookmarks: getVisualBookmarks() } });
         respond({ type: 'STATUS_UPDATE', payload: { status: 'ready' } });
 
-        calculateHistogram({
-            filteredIndices,
-            timestampCache,
-            respond,
-            currentFile,
-            lineOffsets,
-            isStreamMode
-        });
+        if (timestampCache) {
+            calculateHistogram({
+                filteredIndices,
+                timestampCache,
+                respond,
+                currentFile,
+                lineOffsets,
+                isStreamMode
+            });
+        }
         return;
     }
 
@@ -709,27 +662,12 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
     const totalLines = isStreamMode ? streamLineCount : (lineOffsets ? lineOffsets.length : 0);
     console.log(`[Worker] Preparing filter for ${totalLines} lines (isStream: ${isStreamMode})`);
 
-    // ✅ Dynamic Scaling (File size proportional): Maximizes processing speed by variably applying chunk size and concurrency based on line count.
-    let MAX_LINES_PER_CHUNK = 20000;
-    let dynamicConcurrency = Math.max(2, numSubWorkers);
-
-    if (totalLines > 5000000) {
-        // Ultra-large capacity (5M+ lines) -> Maximize chunk size to minimize IPC/stream overhead (up to 250k)
-        MAX_LINES_PER_CHUNK = 250000;
-        dynamicConcurrency = Math.max(6, numSubWorkers + 2); // Allow exceeding available cores (Induce intensive multitasking)
-    } else if (totalLines > 1000000) {
-        // Large capacity (1M ~ 5M lines) -> 100k chunks
-        MAX_LINES_PER_CHUNK = 100000;
-        dynamicConcurrency = Math.max(4, numSubWorkers);
-    } else {
-        // Normal capacity (under 1M) -> Split finely for better UI responsiveness
-        MAX_LINES_PER_CHUNK = 20000;
-        dynamicConcurrency = numSubWorkers;
-    }
-
-    const numChunks = Math.ceil(totalLines / MAX_LINES_PER_CHUNK);
-    const linesPerChunk = MAX_LINES_PER_CHUNK;
-    console.log(`[Worker] Dynamic Strategy: ${numChunks} chunks (${linesPerChunk} lines each), Concurrency: ${dynamicConcurrency}`);
+    const hasAliveSubWorkers = subWorkerPool.getActiveCount() > 0 && !subWorkerPool.isDisabled();
+    const strategy = computeFilterStrategy(totalLines, isLocalFileMode, hasAliveSubWorkers, numSubWorkers);
+    const numChunks = strategy.numChunks;
+    const linesPerChunk = strategy.linesPerChunk;
+    const dynamicConcurrency = strategy.concurrency;
+    console.log(`[Worker] Dynamic Strategy: ${numChunks} chunks (${linesPerChunk} lines each), Concurrency: ${dynamicConcurrency}, SubWorkers: ${subWorkerPool.getActiveCount()}`);
 
     const chunkResults: (Int32Array | null)[] = new Array(numChunks).fill(null);
     let completedChunks = 0;
@@ -788,142 +726,46 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
                 }
             });
 
-            calculateHistogram({
-                filteredIndices,
-                timestampCache,
-                respond,
-                currentFile,
-                lineOffsets,
-                isStreamMode
-            });
+            if (timestampCache) {
+                calculateHistogram({
+                    filteredIndices,
+                    timestampCache,
+                    respond,
+                    currentFile,
+                    lineOffsets,
+                    isStreamMode
+                });
+            }
         }
     };
 
 
-    const decoder = new TextDecoder();
-    let nextChunkIdx = 0;
-    const MAX_CONCURRENT_CHUNKS = dynamicConcurrency; // ✅ Apply calculated dynamic concurrency
-
-    const processNextChunk = async () => {
-        if (nextChunkIdx >= numChunks || filterRequestId !== currentFilterRequestId) return;
-
-        const i = nextChunkIdx++;
-        const startLine = i * linesPerChunk;
-        const endLine = Math.min(startLine + linesPerChunk, totalLines);
-        const sw = subWorkers.length > 0 ? subWorkers[i % subWorkers.length] : null;
-
-        if (!sw) {
-            // Fallback: Main Worker
-            try {
-                if (isStreamMode) {
-                    const chunkLines: string[] = [];
-                    for (let j = startLine; j < endLine; j++) {
-                        const s = lineOffsetsStream[j];
-                        const l = lineLengthsStream[j];
-                        chunkLines.push(decoder.decode(logBuffer.subarray(s, s + l).slice()));
-                    }
-                    const mList: number[] = [];
-                    for (let j = 0; j < chunkLines.length; j++) {
-                        if (checkIsMatch(chunkLines[j], normalizedRule, false, currentQuickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
-                            mList.push(startLine + j);
-                        }
-                    }
-                    onChunkDone(i, new Int32Array(mList), filterRequestId);
-                } else if (isLocalFileMode) {
-                    const startByte = Number(lineOffsets![startLine]);
-                    const endByte = Number(endLine < lineOffsets!.length ? lineOffsets![endLine] : localFileSize);
-                    const chunkBuffer = await rpcCall('readFileSegment', { path: localFilePath, start: startByte, end: endByte });
-                    const text = decoder.decode(chunkBuffer);
-                    const lines = text.split('\n');
-                    if (text.endsWith('\n')) lines.pop();
-                    const mList: number[] = [];
-                    for (let j = 0; j < lines.length; j++) {
-                        const line = lines[j];
-                        const cleanLine = line.endsWith('\r') ? line.slice(0, -1) : line;
-                        if (checkIsMatch(cleanLine, normalizedRule, false, currentQuickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
-                            mList.push(startLine + j);
-                        }
-                    }
-                    onChunkDone(i, new Int32Array(mList), filterRequestId);
-                }
-            } catch (err) {
-                console.error(`[Worker] Main worker chunk processing failed: ${i}`, err);
-                onChunkDone(i, null, filterRequestId);
-            }
-            processNextChunk();
-            return;
-        }
-
-        // Parallel: SubWorker
-        if (isStreamMode) {
-            const chunkLines: string[] = [];
-            for (let j = startLine; j < endLine; j++) {
-                const s = lineOffsetsStream[j];
-                const l = lineLengthsStream[j];
-                chunkLines.push(decoder.decode(logBuffer.subarray(s, s + l).slice()));
-            }
-
-            const messageHandler = (e: MessageEvent) => {
-                if (e.data.type === 'FILTER_LINES_COMPLETE' && e.data.payload.chunkId === i) {
-                    if (e.data.payload.requestId === filterRequestId) {
-                        sw.removeEventListener('message', messageHandler);
-                        onChunkDone(i, e.data.payload.matches, e.data.payload.requestId);
-                        processNextChunk();
-                    }
-                }
-            };
-            sw.addEventListener('message', messageHandler);
-            sw.postMessage({
-                type: 'FILTER_LINES',
-                payload: { chunkId: i, lines: chunkLines, offset: startLine, rule: currentRule, quickFilter: currentQuickFilter, requestId: filterRequestId }
-            });
-        } else if (isLocalFileMode) {
-            const startByte = Number(lineOffsets![startLine]);
-            const endByte = Number(endLine < lineOffsets!.length ? lineOffsets![endLine] : localFileSize);
-
-            rpcCall('readFileSegment', { path: localFilePath, start: startByte, end: endByte }).then((chunkBuffer: Uint8Array) => {
-                const messageHandler = (e: MessageEvent) => {
-                    if (e.data.type === 'CHUNK_COMPLETE' && e.data.payload.chunkId === i) {
-                        if (e.data.payload.requestId === filterRequestId) {
-                            sw.removeEventListener('message', messageHandler);
-                            onChunkDone(i, e.data.payload.matches, e.data.payload.requestId);
-                            processNextChunk();
-                        }
-                    }
-                };
-                sw.addEventListener('message', messageHandler);
-                sw.postMessage({
-                    type: 'FILTER_CHUNK',
-                    payload: { chunkId: i, buffer: chunkBuffer, offset: startLine, rule: currentRule, quickFilter: currentQuickFilter, requestId: filterRequestId }
-                }, [chunkBuffer.buffer]);
-            }).catch(err => {
-                console.error(`[Worker] RPC failed for chunk ${i}`, err);
-                onChunkDone(i, null, filterRequestId);
-                processNextChunk();
-            });
-        } else if (currentFile) {
-            const chunkBlob = currentFile.slice(Number(lineOffsets![startLine]), Number(endLine < lineOffsets!.length ? lineOffsets![endLine] : currentFile.size));
-            const messageHandler = (e: MessageEvent) => {
-                if (e.data.type === 'CHUNK_COMPLETE' && e.data.payload.chunkId === i) {
-                    if (e.data.payload.requestId === filterRequestId) {
-                        sw.removeEventListener('message', messageHandler);
-                        onChunkDone(i, e.data.payload.matches, e.data.payload.requestId);
-                        processNextChunk();
-                    }
-                }
-            };
-            sw.addEventListener('message', messageHandler);
-            sw.postMessage({
-                type: 'FILTER_CHUNK',
-                payload: { chunkId: i, blob: chunkBlob, offset: startLine, rule: currentRule, quickFilter: currentQuickFilter, requestId: filterRequestId }
-            });
-        }
-    };
-
-    // Initial execution
-    for (let k = 0; k < Math.min(MAX_CONCURRENT_CHUNKS, numChunks); k++) {
-        processNextChunk();
-    }
+    runParallelFilterChunks({
+        totalLines,
+        linesPerChunk,
+        numChunks,
+        initialConcurrency: dynamicConcurrency,
+        filterRequestId,
+        isCancelled: () => filterRequestId !== currentFilterRequestId,
+        isStreamMode,
+        isLocalFileMode,
+        localFilePath,
+        localFileSize,
+        currentFile,
+        lineOffsets,
+        lineOffsetsStream,
+        lineLengthsStream,
+        logBuffer,
+        normalizedRule,
+        currentRule,
+        currentQuickFilter,
+        wasmEngine,
+        wasmMemory,
+        textEncoder,
+        rpcCall,
+        pool: subWorkerPool,
+        onChunkDone,
+    });
 };
 
 
@@ -1112,6 +954,47 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                 get current() { return isCalculatingHeatmap; },
                 set current(val) { isCalculatingHeatmap = val; }
             });
+            break;
+        case 'REQUEST_HISTOGRAM':
+            if (timestampCache) {
+                calculateHistogram({
+                    filteredIndices,
+                    timestampCache,
+                    respond,
+                    currentFile,
+                    lineOffsets,
+                    isStreamMode
+                });
+            } else if (!isBuildingTimestampCache) {
+                isBuildingTimestampCache = true;
+                buildTimestampCache({
+                    currentFile,
+                    lineOffsets,
+                    filteredIndices,
+                    isStreamMode,
+                    isLocalFileMode,
+                    localFilePath,
+                    localFileSize,
+                    rpcCall,
+                    respond,
+                    timestampCache,
+                    setTimestampCache: (cache) => { timestampCache = cache; }
+                }).then((cache) => {
+                    isBuildingTimestampCache = false;
+                    timestampCache = cache;
+                    calculateHistogram({
+                        filteredIndices,
+                        timestampCache,
+                        respond,
+                        currentFile,
+                        lineOffsets,
+                        isStreamMode
+                    });
+                }).catch(err => {
+                    isBuildingTimestampCache = false;
+                    console.error('[Worker] Lazy buildTimestampCache failed', err);
+                });
+            }
             break;
         case 'PERF_ANALYSIS':
             try {

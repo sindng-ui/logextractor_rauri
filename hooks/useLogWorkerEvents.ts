@@ -133,8 +133,10 @@ export function useLogWorkerEvents() {
                 if (setActiveLineIndex) setActiveLineIndex(-1);
                 if (setSelectedIndices) setSelectedIndices(new Set());
 
-                // 💡 성능 히트맵 자동 요청 (500 포인트)
-                workerRef.current?.postMessage({ type: 'GET_PERFORMANCE_HEATMAP', payload: { points: 500 } });
+                // 💡 성능 히트맵 자동 요청 (500 포인트) - 첫 화면 텍스트(GET_LINES) 렌더링이 최우선 처리되도록 양보
+                setTimeout(() => {
+                    workerRef.current?.postMessage({ type: 'GET_PERFORMANCE_HEATMAP', payload: { points: 500 } });
+                }, 100);
                 break;
 
             case 'HEATMAP_DATA':

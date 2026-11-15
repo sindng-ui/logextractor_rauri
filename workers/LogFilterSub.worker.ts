@@ -4,6 +4,13 @@ import { checkIsMatch } from '../utils/logFiltering';
 
 const ctx: Worker = self as any;
 
+// Notify parent worker immediately that nested sub-worker booted cleanly
+try {
+    ctx.postMessage({ type: 'SUBWORKER_READY' });
+} catch {
+    // Ignore if detached
+}
+
 // --- WASM Filter Engine ---
 import initWasmModule, { FilterEngine } from '../public/wasm/happy_filter.js';
 // @ts-ignore: Vite public url resolving
@@ -12,20 +19,32 @@ import wasmUrl from '/wasm/happy_filter_bg.wasm?url';
 let wasmEngine: any = null;
 let wasmMemory: WebAssembly.Memory | null = null;
 let wasmModule: any = { FilterEngine }; // Store reference
+let lastWasmCaseSensitive: boolean | null = null;
+let lastWasmKeywordsKey: string | null = null;
+
+// eslint-disable-next-line no-control-regex
+const ANSI_REGEX = /\x1B\[[0-9;]*[a-zA-Z]/g;
 
 const initWasm = async () => {
     try {
         console.log('[SubWorker] Initializing WASM Filter Engine (Bundled)...');
         console.log('[SubWorker] wasmUrl:', wasmUrl);
-        const instance = await initWasmModule(wasmUrl);
-        wasmMemory = (instance as any).memory;
+        const wasmLoadWithTimeout = Promise.race([
+            initWasmModule(wasmUrl),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('WASM load timeout')), 2500))
+        ]);
+        const instance: any = await wasmLoadWithTimeout;
+        wasmMemory = instance.memory;
         wasmEngine = new FilterEngine(false);
+        lastWasmCaseSensitive = false;
+        lastWasmKeywordsKey = '';
 
         // --- WASM & JIT Warmup (Cold Start Optimization) ---
         // Pre-warm the V8 engine (TurboFan) and WASM bridge to an optimized state before initial filtering.
         try {
             const dummyRule = { excludes: [], includeGroups: [['___warmup___']], happyCombosCaseSensitive: false, showRawLogLines: true };
             wasmEngine.update_keywords(['___warmup___']);
+            lastWasmKeywordsKey = '___warmup___';
             const dummyLine = "01-01 12:00:00.000  1000  1000 I WARMUP  : Warmup V8 JIT and WASM Bridge for fast first filter";
             // ✅ Efficient pre-warming: Induce JIT optimization within max 10ms instead of unconditional 50k loops to prevent CPU waste
             const startTime = performance.now();
@@ -42,6 +61,32 @@ const initWasm = async () => {
         console.log('[SubWorker] WASM Filter Engine initialized and JIT warmed up successfully');
     } catch (e) {
         console.warn('[SubWorker] WASM init failed, using JS fallback', e);
+        wasmEngine = null;
+        wasmMemory = null;
+    }
+};
+
+const syncWasmKeywords = (rule: any) => {
+    if (!wasmEngine || !wasmModule) return;
+    try {
+        const isCaseSensitive = !!rule?.happyCombosCaseSensitive;
+        const allKeywords = Array.isArray(rule?.includeGroups) ? (rule.includeGroups as string[][]).flat() : [];
+        const keywordsKey = allKeywords.join('\u0000');
+
+        if (lastWasmCaseSensitive !== isCaseSensitive) {
+            try { wasmEngine.free?.(); } catch { }
+            wasmEngine = new wasmModule.FilterEngine(isCaseSensitive);
+            lastWasmCaseSensitive = isCaseSensitive;
+            lastWasmKeywordsKey = null;
+        }
+
+        if (lastWasmKeywordsKey !== keywordsKey) {
+            wasmEngine.update_keywords(allKeywords);
+            lastWasmKeywordsKey = keywordsKey;
+        }
+    } catch (e) {
+        console.warn('[SubWorker] WASM keyword sync failed, falling back to JS matching', e);
+        wasmEngine = null;
     }
 };
 
@@ -50,24 +95,24 @@ const textEncoder = new TextEncoder();
 const wasmInitPromise = initWasm();
 
 ctx.onmessage = async (e) => {
-    await wasmInitPromise; // 🚨 Critical fix: Prevent JS Fallback (5.5s) from triggering if processing starts before WASM is ready!
+    const { type, payload } = e.data || {};
 
-    const { type, payload } = e.data;
+    // Acknowledge immediately so parent worker knows sub-worker is alive before any async wait
+    if ((type === 'FILTER_CHUNK' || type === 'FILTER_LINES') && payload) {
+        ctx.postMessage({
+            type: 'CHUNK_ACK',
+            payload: { chunkId: payload.chunkId, requestId: payload.requestId }
+        });
+    }
+
+    await wasmInitPromise; // 🚨 Critical fix: Prevent JS Fallback (5.5s) from triggering if processing starts before WASM is ready!
 
     if (type === 'FILTER_CHUNK') {
         const { blob, buffer, rule, quickFilter, chunkId, offset = 0, requestId } = payload;
         const startTime = Date.now();
         console.log(`[SubWorker ${chunkId}] FILTER_CHUNK Start (RequestID: ${requestId})`);
 
-        // Sync WASM engine keywords
-        if (wasmEngine && wasmModule) {
-            const isCaseSensitive = !!rule.happyCombosCaseSensitive;
-            wasmEngine = new wasmModule.FilterEngine(isCaseSensitive);
-
-            // ✅ Optimization: Use already normalized keywords from main worker
-            const allKeywords = (rule.includeGroups as string[][]).flat();
-            wasmEngine.update_keywords(allKeywords);
-        }
+        syncWasmKeywords(rule);
 
         let relativeLineIndex = 0;
         const matchesList: number[] = [];
@@ -87,10 +132,10 @@ ctx.onmessage = async (e) => {
                     const lines = textBuf.split('\n');
                     textBuf = lines.pop() || '';
 
-                    for (const line of lines) {
-                        // Strip ANSI and CR
-                        // eslint-disable-next-line no-control-regex
-                        const cleanLine = line.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\r$/, '');
+                    for (let i = 0; i < lines.length; i++) {
+                        let line = lines[i];
+                        if (line.endsWith('\r')) line = line.slice(0, -1);
+                        const cleanLine = line.includes('\x1b') ? line.replace(ANSI_REGEX, '') : line;
                         if (checkIsMatch(cleanLine, rule, false, quickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
                             matchesList.push(offset + relativeLineIndex);
                         }
@@ -98,7 +143,8 @@ ctx.onmessage = async (e) => {
                     }
                 }
                 if (textBuf) {
-                    if (checkIsMatch(textBuf, rule, false, quickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
+                    const cleanTail = textBuf.includes('\x1b') ? textBuf.replace(ANSI_REGEX, '') : textBuf;
+                    if (checkIsMatch(cleanTail, rule, false, quickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
                         matchesList.push(offset + relativeLineIndex);
                     }
                     relativeLineIndex++;
@@ -112,10 +158,9 @@ ctx.onmessage = async (e) => {
                 if (textBuf.endsWith('\n')) lines.pop();
 
                 for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
-                    // Strip ANSI and CR (Windows log format compat)
-                    // eslint-disable-next-line no-control-regex
-                    const cleanLine = line.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\r$/, '');
+                    let line = lines[i];
+                    if (line.endsWith('\r')) line = line.slice(0, -1);
+                    const cleanLine = line.includes('\x1b') ? line.replace(ANSI_REGEX, '') : line;
 
                     if (checkIsMatch(cleanLine, rule, false, quickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
                         matchesList.push(offset + relativeLineIndex);
@@ -145,19 +190,17 @@ ctx.onmessage = async (e) => {
         const startTime = Date.now();
         console.log(`[SubWorker ${chunkId}] FILTER_LINES Start (RequestID: ${requestId}) lines: ${lines.length}`);
 
-        // Sync WASM engine keywords
-        if (wasmEngine && wasmModule) {
-            const isCaseSensitive = !!rule.happyCombosCaseSensitive;
-            wasmEngine = new wasmModule.FilterEngine(isCaseSensitive);
-            const allKeywords = (rule.includeGroups as string[][]).flat();
-            wasmEngine.update_keywords(allKeywords);
-        }
+        syncWasmKeywords(rule);
 
         const matchesList: number[] = [];
-        for (let i = 0; i < lines.length; i++) {
-            if (checkIsMatch(lines[i], rule, false, quickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
-                matchesList.push(offset + i);
+        try {
+            for (let i = 0; i < lines.length; i++) {
+                if (checkIsMatch(lines[i], rule, false, quickFilter, wasmEngine, wasmMemory || undefined, textEncoder)) {
+                    matchesList.push(offset + i);
+                }
             }
+        } catch (err) {
+            console.error(`[SubWorker ${chunkId}] FILTER_LINES Error`, err);
         }
 
         console.log(`[SubWorker ${chunkId}] FILTER_LINES Done (RequestID: ${requestId}) matches: ${matchesList.length} time: ${Date.now() - startTime}ms`);

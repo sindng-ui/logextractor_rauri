@@ -16,7 +16,7 @@
 | `LogExtractor` | `components/LogExtractor.tsx` | Multi-tab session manager, drag-and-drop tab sorting (`@dnd-kit`), and split-view orchestrator. |
 | `LogSession` | `components/LogSession.tsx` | Individual log tab session controller binding workers, toolbar, configuration panel, and canvas viewer. |
 | `TopBar` | `components/LogViewer/TopBar.tsx` | Toolbar hosting Settings button on the left, Mission/Rules, Tizen Connection, Analysis panels, and Single/Split layout switcher. |
-| `LogViewer/*` | `components/LogViewer/**` | 52 specialized components/hooks including `HyperLogRenderer.tsx`, `LogViewerPane.tsx`, `ConfigurationPanel.tsx`, `ConfigSections/*`, `PerfDashboard/*`, `SplitAnalyzerPanel.tsx`, `SpamAnalyzerPanel.tsx`, `TransactionDrawer.tsx`, `LatencySpotlightDrawer.tsx`, `EventHistogramModal.tsx`. |
+| `LogViewer/*` | `components/LogViewer/**` | 52 specialized components/hooks including `HyperLogRenderer.tsx`, `LogViewerPane.tsx`, `ConfigurationPanel.tsx`, `ConfigSections/*` (`HappyComboSection.tsx` draft-only combo root creation without premature search), `PerfDashboard/*`, `SplitAnalyzerPanel.tsx`, `SpamAnalyzerPanel.tsx`, `TransactionDrawer.tsx`, `LatencySpotlightDrawer.tsx`, `EventHistogramModal.tsx`. |
 | `LogArchive/*` | `components/LogArchive/**` | 20 components/hooks/workers for IndexedDB (`Dexie`) log snippet archiving, tagging, search, and statistics. |
 | `TizenConnectionModal` | `components/TizenConnectionModal.tsx` | Live stream connection modal for SDB, SSH, Serial port, and Test Scroll simulator via `createLogStreamSocket`. |
 
@@ -28,7 +28,8 @@
 - `useLogAnalysisActions.ts`, `useLogExportActions.ts`, `useSplitAnalysis.ts`, `useFindInAll.ts`, `useCliHandlers.ts`, `useLogShortcuts.ts`.
 
 ## 4. Web Workers (`workers/`) & WASM (`public/wasm/`)
-- `LogProcessor.worker.ts`: Primary log indexing, filtering, and RPC coordinator.
-- `LogFilterSub.worker.ts`: Parallel sub-worker pool executing Rust WASM SIMD/Aho-Corasick filtering on `SharedArrayBuffer`.
+- `LogProcessor.worker.ts`: Primary log indexing, filtering, and RPC coordinator (supports instant post-index rendering via identity-initialized `filteredIndices` check and on-demand `REQUEST_HISTOGRAM`).
+- `workerFilterExecutor.ts`: Sub-worker pool lifecycle (`SubWorkerPool`), `CHUNK_ACK` watchdog recovery, and Main Worker fallback executor (`isStreamMode`, `isLocalFileMode`, and `currentFile` Blob slicing).
+- `LogFilterSub.worker.ts`: Parallel sub-worker executing Rust WASM Aho-Corasick / JS fallback filtering with `SUBWORKER_READY`/`CHUNK_ACK` handshakes and cached `FilterEngine` reuse.
 - `LogIndexer.worker.ts`, `LogStream.worker.ts`, `PerfTool.worker.ts`, `Search.worker.ts`, `SplitAnalysis.worker.ts`.
-- Worker Handlers: `workerDataReader.ts`, `workerAnalysisHandlers.ts`, `workerHistogramHandler.ts`, `latencyAnalysisHandler.ts`, `SpamAnalyzer.logic.ts`, `SplitAnalysisUtils.ts`, `TransactionAnalyzer.logic.ts`, `workerBookmarkHandlers.ts`.
+- Worker Handlers: `workerDataReader.ts`, `workerAnalysisHandlers.ts` (yields event loop during heatmap sampling), `workerHistogramHandler.ts` (lazy on-demand `timestampCache` with 128-byte prefix cap & chunk yielding), `latencyAnalysisHandler.ts`, `SpamAnalyzer.logic.ts`, `SplitAnalysisUtils.ts`, `TransactionAnalyzer.logic.ts`, `workerBookmarkHandlers.ts`.

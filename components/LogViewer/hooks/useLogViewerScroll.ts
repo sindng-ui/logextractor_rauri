@@ -7,6 +7,7 @@ interface UseLogViewerScrollProps {
     initialScrollIndex?: number;
     absoluteOffset?: number;
     fileName?: string;
+    isStreamMode?: boolean;
     onSyncScroll?: (deltaY: number) => void;
     callbacks: {
         scrollToIndex: (index: number, options?: { align: 'start' | 'center' | 'end' }) => void;
@@ -19,6 +20,7 @@ export function useLogViewerScroll({
     initialScrollIndex,
     absoluteOffset = 0,
     fileName,
+    isStreamMode = false,
     onSyncScroll,
     callbacks
 }: UseLogViewerScrollProps) {
@@ -50,14 +52,14 @@ export function useLogViewerScroll({
         }
     }, [onSyncScroll]);
 
-    // Smart Auto-Scroll
+    // Smart Auto-Scroll (Only for live stream mode)
     useEffect(() => {
-        if (!isAutoScrollPaused && atBottom && totalMatches > 0) {
+        if (isStreamMode && !isAutoScrollPaused && atBottom && totalMatches > 0) {
             requestAnimationFrame(() => {
                 callbacks.scrollToIndex(totalMatches - 1, { align: 'end' });
             });
         }
-    }, [totalMatches, isAutoScrollPaused, atBottom, callbacks]);
+    }, [isStreamMode, totalMatches, isAutoScrollPaused, atBottom, callbacks]);
 
     // Track Shift key for sync scrolling and overrides
     useEffect(() => {

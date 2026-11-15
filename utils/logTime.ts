@@ -18,6 +18,30 @@ const TIME_PATTERNS = [
     /^\s*\[\s*(\d+\.\d+)\s*\]/
 ];
 
+const STD_TIME_REGEX = /(\d{4}-)?(\d{2}-\d{2}\s+)?(\d{2}:\d{2}:\d{2}\.\d{3})/g;
+const MONO_TIME_REGEX = /(?:^|\s|[:]\s*|\[\s*)(\d+\.\d{3,})(?:\s|\]|:|$)/g;
+const SIMPLE_MONO_TIME_REGEX = /^\s*(?:\[\s*)?(\d+\.\d{1,2})(?:\s*\])?/g;
+
+const INIT_NOW = new Date();
+const DEFAULT_YEAR = INIT_NOW.getFullYear();
+const DEFAULT_MONTH = INIT_NOW.getMonth();
+const DEFAULT_DAY = INIT_NOW.getDate();
+const DEFAULT_DAY_START_MS = new Date(DEFAULT_YEAR, DEFAULT_MONTH, DEFAULT_DAY, 0, 0, 0, 0).getTime();
+const dayBaseCache = new Map<number, number>();
+
+const getDayBaseMs = (year: number, month: number, day: number): number => {
+    if (year === DEFAULT_YEAR && month === DEFAULT_MONTH && day === DEFAULT_DAY) {
+        return DEFAULT_DAY_START_MS;
+    }
+    const key = (year * 10000) + (month * 100) + day;
+    let base = dayBaseCache.get(key);
+    if (base === undefined) {
+        base = new Date(year, month, day, 0, 0, 0, 0).getTime();
+        dayBaseCache.set(key, base);
+    }
+    return base;
+};
+
 export const extractTimestamp = (line: string): number | null => {
     if (!line) return null;
 
@@ -45,28 +69,26 @@ export const extractTimestamp = (line: string): number | null => {
         if (metaEndIdx + 2 > boundary) boundary = metaEndIdx + 2;
     }
 
-    const preamble = line.substring(0, boundary);
-    const candidates: { value: number; index: number }[] = [];
+    const preamble = line.length > boundary ? line.substring(0, boundary) : line;
+    let bestValue = 0;
+    let bestIndex = -1;
 
-    const stdRegex = /(\d{4}-)?(\d{2}-\d{2}\s+)?(\d{2}:\d{2}:\d{2}\.\d{3})/g;
+    STD_TIME_REGEX.lastIndex = 0;
     let match;
     const stdRanges: { start: number, end: number }[] = [];
 
-    while ((match = stdRegex.exec(preamble)) !== null) {
+    while ((match = STD_TIME_REGEX.exec(preamble)) !== null) {
         stdRanges.push({ start: match.index, end: match.index + match[0].length });
 
-        const now = new Date();
-        let year = now.getFullYear();
-        let month = now.getMonth();
-        let day = now.getDate();
+        let year = DEFAULT_YEAR;
+        let month = DEFAULT_MONTH;
+        let day = DEFAULT_DAY;
 
         if (match[1]) year = parseInt(match[1], 10);
         if (match[2]) {
-            const dateParts = match[2].trim().split('-');
-            if (dateParts.length === 2) {
-                month = parseInt(dateParts[0], 10) - 1;
-                day = parseInt(dateParts[1], 10);
-            }
+            const dateStr = match[2];
+            month = parseInt(dateStr.substring(0, 2), 10) - 1;
+            day = parseInt(dateStr.substring(3, 5), 10);
         }
 
         const timePart = match[3];
@@ -75,44 +97,45 @@ export const extractTimestamp = (line: string): number | null => {
         const s = parseInt(timePart.substring(6, 8), 10);
         const ms = parseInt(timePart.substring(9, 12), 10);
 
-        const val = new Date(year, month, day, h, m, s, ms).getTime();
-        candidates.push({ value: val, index: match.index });
+        const val = getDayBaseMs(year, month, day) + ((h * 3600 + m * 60 + s) * 1000) + ms;
+        if (match.index >= bestIndex) {
+            bestIndex = match.index;
+            bestValue = val;
+        }
     }
 
     // 2. Monotonic / Seconds-Dot-Milliseconds (e.g. 12345.6789)
     // Matches if preceded by space, start, colon, or bracket
     // This catches the second time in "[Date] service: 123.456"
-    const monoRegex = /(?:^|\s|[:]\s*|\[\s*)(\d+\.\d{3,})(?:\s|\]|:|$)/g;
-    while ((match = monoRegex.exec(preamble)) !== null) {
+    MONO_TIME_REGEX.lastIndex = 0;
+    while ((match = MONO_TIME_REGEX.exec(preamble)) !== null) {
         const val = parseFloat(match[1]);
         if (!isNaN(val)) {
-            // Calculate actual index of the digits
             const digitIdx = match.index + match[0].indexOf(match[1]);
-            const isInsideStd = stdRanges.some(r => digitIdx >= r.start && digitIdx < r.end);
-            if (!isInsideStd) {
-                candidates.push({ value: val * 1000, index: digitIdx });
+            const isInsideStd = stdRanges.length > 0 && stdRanges.some(r => digitIdx >= r.start && digitIdx < r.end);
+            if (!isInsideStd && digitIdx >= bestIndex) {
+                bestIndex = digitIdx;
+                bestValue = val * 1000;
             }
         }
     }
 
     // 3. Simple Monotonic at start or in brackets (2 decimal places fallback)
-    const simpleMonoRegex = /^\s*(?:\[\s*)?(\d+\.\d{1,2})(?:\s*\])?/g;
-    while ((match = simpleMonoRegex.exec(preamble)) !== null) {
+    SIMPLE_MONO_TIME_REGEX.lastIndex = 0;
+    while ((match = SIMPLE_MONO_TIME_REGEX.exec(preamble)) !== null) {
         const val = parseFloat(match[1]);
         if (!isNaN(val)) {
             const digitIdx = match.index + match[0].indexOf(match[1]);
-            const isInsideStd = stdRanges.some(r => digitIdx >= r.start && digitIdx < r.end);
-            if (!isInsideStd) {
-                candidates.push({ value: val * 1000, index: digitIdx });
+            const isInsideStd = stdRanges.length > 0 && stdRanges.some(r => digitIdx >= r.start && digitIdx < r.end);
+            if (!isInsideStd && digitIdx >= bestIndex) {
+                bestIndex = digitIdx;
+                bestValue = val * 1000;
             }
         }
     }
 
-    if (candidates.length === 0) return null;
-
-    // Sort by index descending (rightmost first)
-    candidates.sort((a, b) => b.index - a.index);
-    return candidates[0].value;
+    if (bestIndex === -1) return null;
+    return bestValue;
 };
 
 /**

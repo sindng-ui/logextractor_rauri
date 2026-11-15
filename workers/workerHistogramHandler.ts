@@ -93,8 +93,8 @@ export const buildTimestampCache = async (
             if (lineStart >= lineEnd) continue;
 
             const relStart = Number(lineStart - minByte);
-            const relEnd = Number(lineEnd - minByte);
-            const line = decoder.decode(uint8View.subarray(relStart, relEnd)).replace(/\r?\n$/, '');
+            const relEnd = Math.min(Number(lineEnd - minByte), relStart + 128);
+            const line = decoder.decode(uint8View.subarray(relStart, relEnd));
             const ts = extractTimestamp(line);
             cache[k] = ts !== null ? ts : 0;
           }
@@ -109,6 +109,8 @@ export const buildTimestampCache = async (
         onProgress((i / totalLines) * 100);
         lastNotifyTime = now;
       }
+      // Yield to event loop so GET_LINES and UI commands are never starved
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
   } else if (isFile) {
     const reader = new FileReaderSync();
@@ -146,8 +148,8 @@ export const buildTimestampCache = async (
             if (lineStart >= lineEnd) continue;
 
             const relStart = Number(lineStart - minByte);
-            const relEnd = Number(lineEnd - minByte);
-            const line = decoder.decode(uint8View.subarray(relStart, relEnd)).replace(/\r?\n$/, '');
+            const relEnd = Math.min(Number(lineEnd - minByte), relStart + 128);
+            const line = decoder.decode(uint8View.subarray(relStart, relEnd));
             const ts = extractTimestamp(line);
             cache[k] = ts !== null ? ts : 0;
           }
@@ -162,6 +164,8 @@ export const buildTimestampCache = async (
         onProgress((i / totalLines) * 100);
         lastNotifyTime = now;
       }
+      // Yield to event loop so GET_LINES and UI commands are never starved
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
 

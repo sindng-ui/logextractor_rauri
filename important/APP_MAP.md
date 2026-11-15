@@ -95,7 +95,8 @@
 - **Location**:
   - `Main Logic`: [useLogExtractorLogic.ts](./hooks/useLogExtractorLogic.ts)
   - `Worker`: [LogProcessor.worker.ts](./workers/LogProcessor.worker.ts) (중앙 제어)
-  - `Filter Sub`: [LogFilterSub.worker.ts](./workers/LogFilterSub.worker.ts) (병렬 필터링)
+  - `Filter Executor`: [workerFilterExecutor.ts](./workers/workerFilterExecutor.ts) (서브워커 풀 관리, `CHUNK_ACK` 워치독 및 메인 워커 `File`/Blob 폴백 실행기) [NEW]
+  - `Filter Sub`: [LogFilterSub.worker.ts](./workers/LogFilterSub.worker.ts) (병렬 필터링, `SUBWORKER_READY`/`CHUNK_ACK` 핸드셰이크 및 WASM 폴백 가드) [UPDATED]
   - `WASM Engine`: [src-wasm/](./src-wasm/)
   - `Data Reader`: [workerDataReader.ts](./workers/workerDataReader.ts)
 - **Core Interface**:
@@ -107,6 +108,7 @@
   - `빈 룰 초광속 바이패스 SharedArrayBuffer 동기화 & 스트림 확장`: 해피콤보가 없을 때 필터링 루프를 거치지 않고 전체 인덱스를 넘겨주는 최적화 분기에서, SharedArrayBuffer(filteredIndicesBuffer)에 인덱스 데이터를 직접 채우고 sendSharedBuffers()를 쏘도록 개선하여 UI 렌더러와 동기화가 끊기던 버그를 완벽 해결하고, `!isStreamMode` 제약을 완전 제거하여 실시간 스트림 모드까지 빈 룰 초광속 바이패스 최적화가 상시 적용되도록 영토 확장함. [UPDATED][HOT]
   - `빈 룰 로그 실종 완전 진압 & 깜빡임 제로 동기화 가드 완성 (v8)`: 최초 인덱싱 완료(`INDEX_COMPLETE`) 시점에 `filteredCount`를 즉시 전체 라인 수로 초기 세팅하는 기반 위에, 빈 룰 적용 시 워커로의 `FILTER_LOGS` 디스패치를 전면 유지하여 SharedArrayBuffer 동기화를 100% 보장함으로써 탭 전환/파일 재오픈 시의 먹통 실종 버그를 완전 소탕하고, 동시에 `setWorkerReady(false)` 로딩창 강등만 영리하게 차단하여 단 1프레임의 깜빡임 jank도 허용하지 않는 궁극의 60fps 무결성을 마침내 달성함. [UPDATED][HOT]
   - `필터 유틸 최종 2중 방어가드 수립 & 빈 문자열 감지 보완`: 만에 하나 병렬 서브워커(`LogFilterSub.worker.ts`) 필터링으로 우회하더라도, 필터 조건이 아예 없는 빈 룰 상태(신규 미션의 `[['']]` 같은 가짜 빈 콤보 포함)라면 `checkIsMatch` 매칭 함수 초입부에서 실질 키워드가 없는 빈 룰임을 100% 탐색하여 0.0001초 만에 `true` (무조건 통과)를 즉시 리턴하도록 최종 초광속 가드를 고도화 수립하여 WASM 오작동 오매칭을 원천 차단함. [UPDATED][HOT]
+  - `서브워커 ACK 워치독 & Main Worker Blob 폴백 복구 (Processing 멈춤 원천 해결)`: Tauri WebView2 환경 등에서 중첩 서브워커(`LogFilterSub.worker.ts`)가 스폰/실행 지연되거나 에러/중단되더라도 필터가 `Processing log...`에서 영구 대기하지 않도록 `workerFilterExecutor.ts`의 `SubWorkerPool`과 `CHUNK_ACK` 2000ms 워치독 및 즉시 복구 핸들러를 구축하고, 기존에 누락되어 있던 Main Worker `currentFile` (`Blob.arrayBuffer()`) 폴백과 0라인 청크 즉시 완료, WASM `FilterEngine.free()` + 2500ms 로드 타임아웃/JS 폴백을 적용함. [NEW][HOT]
   - `해피콤보 빈 룰 로그 0.1초 실종 타이밍 버그 완전 진압 및 캐시 가드 복원 (v10)`: 빈 룰 시 무조건 필터싱크를 쏘는 가드 우회로 인해 발생하던 0.1초 중복 워커 갱신 및 lineCount=0 엇박자 실종 버그를 종식시키기 위해, 가드 우회를 완전히 제거하고 순수 해시 캐시 비교 가드를 완벽 복원하여 중복 워커 갱신을 차단하고 0.1초 실종 버그를 완벽 진압함. [UPDATED][HOT]
   - `로그 레벨 색상 & 토글 0ms 즉각 반영 동기화 가드 및 Opacity % 실시간 연동 (HyperLogRenderer.tsx)`: 사용자가 퀵 제어 창(Log Center)에서 로그 레벨 체크박스를 토글하거나 컬러 피커로 색을 바꾸었을 때, 기존에 렌더러 캐시(`cachedLines`)에 저장되어 있던 로그 라인들의 `levelColor`를 0ms 즉각 재평가하여 루프 갱신하는 2중 동기화 가드 장착. 동시에 캔버스 배경 레이어(Background Layer) 렌더링 루프 내에 `logLevelOpacity` 실시간 연동 로직을 추가하고, 대소문자 무관 컬러 매칭 가드(`m.color.toLowerCase() === lineData.levelColor.toLowerCase()`) 및 최하단 `useLayoutEffect` 에 `preferences?.logLevelOpacity` 동기 가드를 3중 장착하여 슬라이더 변경 즉시 메인 로그 화면의 은은한 배경 투명도가 껌벅임 없이 0ms 만에 부드럽고 정확하게 물들도록 완벽한 60fps 무결성 반응성을 완성함. [UPDATED][HOT]
 
@@ -127,7 +129,12 @@
   - **Context Menu UI**: `components/LogSession.tsx` — Concise labels "Analyze PID/TID: {val}" for better UX. [NEW]
 - **Data Flow**: Log Worker(Main) ↔ Log Worker(Sub/WASM) ↔ UI (Binary Read)
 - **Latency Spotlight (지연 시간 스포트라이트) [NEW]**: 필터링된 로그 라인들의 타임스탬프 차이를 백그라운드 워커에서 O(n) 속도로 스캔하여, 지정된 임계값(기본 500ms)을 초과하는 지연 구간을 자동 탐지하고 TOP 20 지연 구간을 리스트로 시각화. 클릭 시 해당 라인으로 Hyper-Jump 이동 및 `Ctrl+Shift+H` 전용 토글 단축키(한글 입력기 상태에서도 오작동 없는 KeyH 바인딩) 지원.
-- **Log Histogram (로그 히스토그램 빈도 차트) [NEW]**: 시간축 로그 발생 빈도 차트. 최초 파일 인덱싱 완료 시점에 백그라운드에서 타임스탬프를 1회 파싱하여 `Float64Array`로 캐싱합니다. 필터링/검색 완료 또는 실시간 스트리밍 시, 메모리 캐시를 O(n) 1-pass 초광속 스캔하여 150개 버킷으로 집계합니다. UI에서는 반응형 SVG 차트로 가볍게 렌더링되며, 특정 바 클릭 시 해당 범위 내 첫 번째 visual index(`firstVisualIndex` 캐시 기반)로 0ms 초광속 스마트 하이퍼 점프를 연동합니다. `Ctrl+Shift+G` 단축키(한글 입력 상태 KeyG 바인딩 대응)로 토글을 지원하며, 분할 뷰(Split Mode) 사용 시 좌우 splitRatio 너비에 비례해 쫀득하게 렌더링됩니다.
+- **Log Histogram (로그 히스토그램 빈도 차트) [UPDATED][HOT]**: 시간축 로그 발생 빈도 차트. 대용량 파일(1GB+, 1,000만 줄 이상) 로딩 직후 메인 워커의 `GET_LINES` 메시지 큐가 블로킹되어 첫 화면 텍스트가 10초 이상 지연되던 문제를 완벽히 해결하기 위해, **최초 인덱싱 완료(`INDEX_COMPLETE`) 시점의 무조건적인 전체 라인 타임스탬프 파싱을 제거하고, 사용자가 히스토그램 패널(`Ctrl+Shift+G`)을 실제로 열 때만 `REQUEST_HISTOGRAM`을 통해 지연(Lazy On-Demand) 생성**하도록 아키텍처를 혁신함. 또한 `buildTimestampCache` 내부에 라인당 최대 128바이트 디코딩 캡(Prefix Cap), 청크 단위 이벤트 루프 양보(`setTimeout(0)` Yielding), `utils/logTime.ts`의 정규식 모듈 스코프 호이스팅 및 자정 기준 타임스탬프 산술 연산 캐싱을 도입하여 백그라운드 빌드 중에도 뷰어 스크롤과 `GET_LINES` 응답이 0ms 지연 없이 즉각 처리되도록 개선함. 필터링/검색 완료 또는 실시간 스트리밍 시에는 메모리 캐시(`Float64Array`)를 O(n) 1-pass 초광속 스캔하여 150개 버킷으로 집계하며, 특정 바 클릭 시 `firstVisualIndex` 캐시 기반으로 0ms 초광속 스마트 하이퍼 점프를 연동합니다.
+- **대용량 파일 인덱싱 직후 0ms 즉각 텍스트 렌더링 파이프라인 최적화 [NEW][HOT]**:
+  - `초기 빈 룰 1,000만 줄 중복 초기화 스킵`: `buildFileIndex` 완료 시 `filteredIndices` SharedArrayBuffer가 이미 `0..N-1`로 초기화되어 있으므로, 직후 실행되는 초기 빈 룰 `applyFilter`에서 1,000만 줄 루프를 재실행하지 않고 O(1)로 즉시 통과하도록 최적화.
+  - `초기 로딩 시 렌더러 캐시 초기화(clearCacheTick) 방지`: 최초 인덱싱 직후 빈 룰 적용 시에는 `clearCacheTick` 증가를 스킵하여 `HyperLogRenderer`가 요청한 첫 화면 `GET_LINES` 결과가 증발하지 않도록 보호.
+  - `Performance Heatmap 지연 디스패치 & 이벤트 루프 양보`: `FILTER_COMPLETE` 직후 `GET_PERFORMANCE_HEATMAP` 호출을 100ms 지연시키고 워커 내부 샘플링 루프에 `setTimeout(0)` 양보를 추가하여 초기 화면 텍스트 렌더링이 최우선 처리되도록 보장.
+  - `정적 파일 로딩 시 Smart Auto-Scroll 오작동 차단`: `useLogViewerScroll`의 자동 하단 스크롤(`scrollToIndex(totalMatches - 1)`)이 실시간 스트리밍(`isStreamMode === true`)에서만 동작하도록 제한하여, 로컬 대용량 파일 오픈 시 맨 끝 줄로 튕겼다가 0번 줄로 돌아오며 발생하던 불필요한 디스크 청크 읽기 경쟁을 원천 차단.
 
 ### [[Log Viewer UI Architecture]]
 - **ID**: `ui-log-viewer-hierarchy`
@@ -173,6 +180,7 @@
   - **Reliable Quick Command Storage**: `contentEditable` 환경에서의 비동기 상태 불일치 문제를 해결하기 위해 DOM 직접 참조 방식의 저장 엔진 적용. 한국어 IME 및 렌더링 지연 상황에서도 완벽한 저장 보장. [HOT][FIX]
   - **Global Config Tab Sync**: Configuration 패널의 Settings/Commands 탭 상태를 전역 컨텍스트로 관리하여, 여러 로그 탭을 오갈 때도 선택 상태가 초기화되지 않고 완벽하게 동기화됨. [NEW][HOT]
   - **탭 전환 단축키 (Ctrl + Shift + Z)**: 설정(Settings) 탭과 커맨드(Commands) 탭 간의 빠른 전환을 위한 단축키로, 한글 IME 입력기 상태(`ㅋ`)에서도 키 감지 누락이 전혀 없도록 물리적 키 코드(`e.code === 'KeyZ'`) 기반으로 완벽한 예외 처리가 장착됨. 특히 멀티 탭 환경에서 백그라운드 탭 리스너들과 단축키 토글 상태가 충돌(토글 취소 현상)하지 않도록 현재 활성화된 Active 탭에서만 이벤트가 동작하도록 차단하는 `isActive` 예외 처리가 적용되어 100% 안전함. [HOT][FIX]
+  - **빈 콤보 드래프트 생성 (NewRoot 제거 & 불필요한 검색 방지)**: `ADD COMBO` / `Create New Combo Group` 클릭 시 기본 `'NewRoot'` 단어를 자동 삽입해 대용량 필터링(`Processing log...`)이 즉시 도는 문제를 제거함. 로컬 드래프트 입력 상태(`isCreatingRoot` + 빈 입력창)로 먼저 추가하고, 사용자가 실제 키워드를 입력해 확정(`Enter` / `Tab` / non-empty `onBlur`)한 순간에만 `updateCurrentRule`로 필터링을 실행함. [NEW][HOT]
 
 ### [[NetTraffic Analyzer]] 🐧⚡ [CORE]
 - **ID**: `NET_TRAFFIC_ANALYZER`

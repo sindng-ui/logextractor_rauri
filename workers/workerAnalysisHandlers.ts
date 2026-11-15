@@ -192,6 +192,9 @@ export const getPerformanceHeatmap = async (
         const decoder = new TextDecoder();
 
         for (let i = 0; i < points; i++) {
+            if (i > 0 && i % 50 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
             const startIdx = i * sampleSize;
             if (startIdx >= totalLines - 1) break;
 
