@@ -1,4 +1,10 @@
-import { checkIsMatch } from '../utils/logFiltering';
+import {
+    compileFilterRule,
+    filterByteBuffer,
+    matchCompiledLine,
+    type CompiledFilterRule,
+    type QuickFilterMode,
+} from '../utils/byteLogFiltering';
 
 const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;]*[a-zA-Z]/g;
 const CHUNK_ACK_TIMEOUT_MS = 2000;
@@ -193,10 +199,10 @@ export const computeFilterStrategy = (
         concurrency = Math.min(Math.max(2, numSubWorkers), 4);
     } else if (totalLines > 5000000) {
         linesPerChunk = 250000;
-        concurrency = Math.max(6, numSubWorkers + 2);
+        concurrency = Math.min(Math.max(4, numSubWorkers), 8);
     } else if (totalLines > 1000000) {
         linesPerChunk = 100000;
-        concurrency = Math.max(4, numSubWorkers);
+        concurrency = Math.min(Math.max(4, numSubWorkers), 8);
     } else {
         linesPerChunk = 20000;
         concurrency = Math.max(1, numSubWorkers);
@@ -238,41 +244,12 @@ export interface FilterExecutionContext {
 
 const yieldToEventLoop = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
-const runLinesMatchOnMainWorker = async (
-    lines: string[],
-    startLine: number,
-    ctx: FilterExecutionContext,
-    stripLines: boolean,
-): Promise<Int32Array | null> => {
-    const matches: number[] = [];
-    for (let j = 0; j < lines.length; j++) {
-        if (j > 0 && j % FALLBACK_YIELD_INTERVAL === 0) {
-            await yieldToEventLoop();
-            if (ctx.isCancelled()) return null;
-        }
-        const candidate = stripLines ? stripLineForMatch(lines[j]) : lines[j];
-        if (
-            checkIsMatch(
-                candidate,
-                ctx.normalizedRule,
-                false,
-                ctx.currentQuickFilter,
-                ctx.wasmEngine,
-                ctx.wasmMemory || undefined,
-                ctx.textEncoder,
-            )
-        ) {
-            matches.push(startLine + j);
-        }
-    }
-    return new Int32Array(matches);
-};
-
 const runChunkOnMainWorker = async (
     chunkId: number,
     startLine: number,
     endLine: number,
     decoder: TextDecoder,
+    compiledRule: CompiledFilterRule,
     ctx: FilterExecutionContext,
 ): Promise<Int32Array | null> => {
     if (ctx.isCancelled()) return null;
@@ -292,17 +269,7 @@ const runChunkOnMainWorker = async (
             const l = ctx.lineLengthsStream[j];
             const slice = ctx.logBuffer.subarray(s, s + l);
             const line = decoder.decode(isShared ? slice.slice() : slice);
-            if (
-                checkIsMatch(
-                    stripLineForMatch(line),
-                    ctx.normalizedRule,
-                    false,
-                    ctx.currentQuickFilter,
-                    ctx.wasmEngine,
-                    ctx.wasmMemory || undefined,
-                    ctx.textEncoder,
-                )
-            ) {
+            if (matchCompiledLine(stripLineForMatch(line), compiledRule)) {
                 matches.push(j);
             }
             processed++;
@@ -320,10 +287,9 @@ const runChunkOnMainWorker = async (
         });
         if (ctx.isCancelled()) return null;
 
-        const text = decoder.decode(chunkBuffer);
-        const lines = text.split('\n');
-        if (text.endsWith('\n')) lines.pop();
-        return runLinesMatchOnMainWorker(lines, startLine, ctx, true);
+        await yieldToEventLoop();
+        if (ctx.isCancelled()) return null;
+        return filterByteBuffer(chunkBuffer, startLine, compiledRule, decoder).matches;
     }
 
     if (ctx.currentFile && ctx.lineOffsets) {
@@ -333,10 +299,9 @@ const runChunkOnMainWorker = async (
         const arrayBuffer = await chunkBlob.arrayBuffer();
         if (ctx.isCancelled()) return null;
 
-        const text = decoder.decode(new Uint8Array(arrayBuffer));
-        const lines = text.split('\n');
-        if (text.endsWith('\n')) lines.pop();
-        return runLinesMatchOnMainWorker(lines, startLine, ctx, true);
+        await yieldToEventLoop();
+        if (ctx.isCancelled()) return null;
+        return filterByteBuffer(new Uint8Array(arrayBuffer), startLine, compiledRule, decoder).matches;
     }
 
     console.warn(`[Worker] No readable source available for Main Worker chunk ${chunkId}`);
@@ -349,6 +314,7 @@ const runChunkOnSubWorker = (
     startLine: number,
     endLine: number,
     decoder: TextDecoder,
+    compiledRule: CompiledFilterRule,
     ctx: FilterExecutionContext,
 ): Promise<Int32Array | null> => {
     return new Promise((resolve) => {
@@ -381,7 +347,7 @@ const runChunkOnSubWorker = (
                 resolve(null);
                 return;
             }
-            runChunkOnMainWorker(chunkId, startLine, endLine, decoder, ctx)
+            runChunkOnMainWorker(chunkId, startLine, endLine, decoder, compiledRule, ctx)
                 .then(resolve)
                 .catch((err) => {
                     console.error(`[Worker] Main Worker recovery failed for chunk ${chunkId}:`, err);
@@ -532,6 +498,10 @@ const runChunkOnSubWorker = (
 
 export const runParallelFilterChunks = (ctx: FilterExecutionContext): void => {
     const decoder = new TextDecoder();
+    const compiledRule = compileFilterRule(
+        ctx.normalizedRule,
+        (ctx.currentQuickFilter || 'none') as QuickFilterMode
+    );
     let nextChunkIdx = 0;
     let inFlightLoops = 0;
 
@@ -552,9 +522,9 @@ export const runParallelFilterChunks = (ctx: FilterExecutionContext): void => {
                 const entry = ctx.pool.pickEntry(chunkId);
                 let matches: Int32Array | null;
                 if (entry) {
-                    matches = await runChunkOnSubWorker(entry, chunkId, startLine, endLine, decoder, ctx);
+                    matches = await runChunkOnSubWorker(entry, chunkId, startLine, endLine, decoder, compiledRule, ctx);
                 } else {
-                    matches = await runChunkOnMainWorker(chunkId, startLine, endLine, decoder, ctx);
+                    matches = await runChunkOnMainWorker(chunkId, startLine, endLine, decoder, compiledRule, ctx);
                 }
                 ctx.onChunkDone(chunkId, matches, ctx.filterRequestId);
             }

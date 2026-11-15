@@ -29,7 +29,8 @@
 
 ## 4. Web Workers (`workers/`) & WASM (`public/wasm/`)
 - `LogProcessor.worker.ts`: Primary log indexing, filtering, and RPC coordinator (supports instant post-index rendering via identity-initialized `filteredIndices` check and on-demand `REQUEST_HISTOGRAM`).
-- `workerFilterExecutor.ts`: Sub-worker pool lifecycle (`SubWorkerPool`), `CHUNK_ACK` watchdog recovery, and Main Worker fallback executor (`isStreamMode`, `isLocalFileMode`, and `currentFile` Blob slicing).
-- `LogFilterSub.worker.ts`: Parallel sub-worker executing Rust WASM Aho-Corasick / JS fallback filtering with `SUBWORKER_READY`/`CHUNK_ACK` handshakes and cached `FilterEngine` reuse.
+- `workerFilterExecutor.ts`: Sub-worker pool lifecycle (`SubWorkerPool`), `CHUNK_ACK` watchdog recovery, and Main Worker byte-scan fallback executor (`isStreamMode`, `isLocalFileMode`, and `currentFile` Blob slicing).
+- `LogFilterSub.worker.ts`: Zero-cold-start parallel sub-worker using `blob.arrayBuffer()` + `utils/byteLogFiltering.ts` (`SUBWORKER_READY`/`CHUNK_ACK` handshakes, no per-line WASM overhead).
+- `byteLogFiltering.ts` (`utils/`): Pre-compiled rule & Boyer-Moore-Horspool raw UTF-8 `Uint8Array` scanner with per-line ANSI / per-chunk non-ASCII JS fallback.
 - `LogIndexer.worker.ts`, `LogStream.worker.ts`, `PerfTool.worker.ts`, `Search.worker.ts`, `SplitAnalysis.worker.ts`.
 - Worker Handlers: `workerDataReader.ts`, `workerAnalysisHandlers.ts` (yields event loop during heatmap sampling), `workerHistogramHandler.ts` (lazy on-demand `timestampCache` with 128-byte prefix cap & chunk yielding), `latencyAnalysisHandler.ts`, `SpamAnalyzer.logic.ts`, `SplitAnalysisUtils.ts`, `TransactionAnalyzer.logic.ts`, `workerBookmarkHandlers.ts`.

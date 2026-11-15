@@ -95,8 +95,9 @@
 - **Location**:
   - `Main Logic`: [useLogExtractorLogic.ts](./hooks/useLogExtractorLogic.ts)
   - `Worker`: [LogProcessor.worker.ts](./workers/LogProcessor.worker.ts) (중앙 제어)
-  - `Filter Executor`: [workerFilterExecutor.ts](./workers/workerFilterExecutor.ts) (서브워커 풀 관리, `CHUNK_ACK` 워치독 및 메인 워커 `File`/Blob 폴백 실행기) [NEW]
-  - `Filter Sub`: [LogFilterSub.worker.ts](./workers/LogFilterSub.worker.ts) (병렬 필터링, `SUBWORKER_READY`/`CHUNK_ACK` 핸드셰이크 및 WASM 폴백 가드) [UPDATED]
+  - `Filter Executor`: [workerFilterExecutor.ts](./workers/workerFilterExecutor.ts) (서브워커 풀 관리, `CHUNK_ACK` 워치독 및 메인 워커 `File`/Blob 바이트 폴백 실행기) [UPDATED]
+  - `Filter Sub`: [LogFilterSub.worker.ts](./workers/LogFilterSub.worker.ts) (`blob.arrayBuffer()` + BMH UTF-8 바이트 스캔 기반 병렬 필터링 및 `SUBWORKER_READY`/`CHUNK_ACK` 핸드셰이크) [UPDATED]
+  - `Byte Filter`: [byteLogFiltering.ts](./utils/byteLogFiltering.ts) (사전 컴파일 룰 기반 Boyer-Moore-Horspool 무변환 바이트 스캔 & ANSI/비ASCII 폴백) [NEW]
   - `WASM Engine`: [src-wasm/](./src-wasm/)
   - `Data Reader`: [workerDataReader.ts](./workers/workerDataReader.ts)
 - **Core Interface**:

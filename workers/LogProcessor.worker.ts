@@ -592,6 +592,7 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 
     currentRule = normalizedRule;
     const filterRequestId = ++currentFilterRequestId; // ✅ Request ID for this specific filter call
+    const filterStartTime = performance.now();
     console.log(`[Worker] Starting applyFilter (RequestID: ${filterRequestId})`);
 
     // ✅ Sync WASM Engine keywords for the main worker (for getLines etc)
@@ -685,7 +686,8 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
         respond({ type: 'STATUS_UPDATE', payload: { status: 'filtering', progress: (completedChunks / numChunks) * 100 } });
 
         if (completedChunks === numChunks) {
-            console.log(`[Worker] Filtering complete. Aggregating results for ${numChunks} chunks...`);
+            const filterElapsedMs = performance.now() - filterStartTime;
+            console.log(`[Worker] Filtering complete in ${filterElapsedMs.toFixed(1)}ms. Aggregating results for ${numChunks} chunks...`);
 
             // ✅ Defensive aggregation in case of failed chunks
             const totalMatches = chunkResults.reduce((sum, res) => sum + (res ? res.length : 0), 0);
