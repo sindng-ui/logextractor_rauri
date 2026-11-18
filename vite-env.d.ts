@@ -6,6 +6,19 @@ interface ElectronAPI {
     readFileSegment: (args: { path: string, start: number, end: number }) => Promise<Uint8Array>;
     readFileSegmentsBatch?: (args: { path: string, ranges: [number, number][] }) => Promise<Uint8Array>;
     indexLogFile?: (args: { path: string }) => Promise<Uint8Array>;
+    indexLogFileMeta?: (args: { path: string }) => Promise<{ totalLines: number; fileSize: number }>;
+    evictLogCache?: (args: { path?: string | null }) => Promise<void>;
+    readLocalLinesByIndices?: (args: { path: string; indices: number[]; stripAnsi: boolean }) => Promise<Uint8Array>;
+    readLocalLineRange?: (args: { path: string; startLine: number; count: number; stripAnsi: boolean }) => Promise<Uint8Array>;
+    findHighlightNative?: (args: {
+        path: string;
+        filterKey?: string | null;
+        bookmarks?: number[] | null;
+        keyword: string;
+        startVisualIdx: number;
+        direction: 'next' | 'prev';
+        caseSensitive: boolean;
+    }) => Promise<{ supported: boolean; foundIndex?: number; originalLineNum?: number }>;
     filterLogFile?: (args: {
         path: string;
         rule: any;

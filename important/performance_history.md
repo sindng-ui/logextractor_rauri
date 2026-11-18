@@ -51,6 +51,25 @@ JS의 한계를 넘어서기 위해 Rust 기반의 WASM 엔진과 멀티 워커 
     - **워커 렌더링 최적화**: 필터링 결과를 SharedArrayBuffer로 공유하여 메인 스레드 부하를 최소화.
 - **효과**: 10MB 이상의 로그 스트리밍 시에도 **UI 응답성 0.1s 이하 유지** 및 필터 변경 시 즉각 반응 달성.
 
+## 📅 [2026.11.19] v2.0.0 퀀텀 점프: Tauri Native Rust SWAR/BMH 엔진 & Zero-Offset 메모리 다이어트 🦀⚡
+Electron 시대의 JS Blob/SubWorker 구조를 완전히 대체하여, 1GB+ 대용량 파일 오픈·초기 필터링 속도 및 RAM 점유율을 세대 교체 수준으로 끌어올린 **v2.0.0 메이저 엔진 혁신**입니다.
+
+- **실패 교훈 (반드시 경계할 안티패턴)**:
+  - 초기 로컬 파일 IPC 방식(`INIT_LOCAL_FILE_STREAM` + 50MB 청크 RPC `readFileSegment`)은 1GB 로그를 Worker ↔ Main ↔ Tauri `invoke` ↔ Rust로 매번 왕복 전송하여, 필터 단어 추가마다 **단어당 ~5초 지연**(모수 축소 효과 상실) 및 파일 오픈 지연을 유발함.
+- **엔진 전면 교체 (`src-tauri/src/commands/log_engine.rs`, `log_matcher.rs`, `log_reader.rs`)**:
+  - **SWAR 8-Byte 병렬 개행 인덱서 (`index_log_file_meta`)**: 최대 12개 OS 스레드(`std::thread::scope`)가 4MB 고정 버퍼로 `u64::from_le_bytes` + `0x0A0A...` 비트 마스크 스캔을 수행하고 Rust `INDEX_CACHE`에만 보관. JS로는 `{ totalLines, fileSize }` 메타데이터(16바이트)만 반환.
+  - **100% Rust 내부 멀티코어 BMH 필터링 (`filter_log_file`)**: WebView/JS로 1GB 바이트가 전혀 넘어가지 않으며, 순수 ASCII 키워드는 UTF-8 디코딩/힙 할당 없이 256-entry Boyer-Moore-Horspool 바이트 점프 스캔 + 청크 단위 `ESC(0x1B)` ANSI Fast-Path 적용. 매칭된 `u32` 줄 번호만 `tauri::ipc::Response` 단일 바이너리로 반환.
+  - **증분 후보 병합 스캔 (`scan_candidates`, `FILTER_CACHE`)**: `parent_key` 기반 32KB gap / 4MB window coalescing으로 2·3번째 단어 추가 시 즉시 반응.
+  - **Lock-free 핸들 풀 & 배치 리더 (`file_io.rs`, `log_reader.rs`)**: 경로당 최대 16개 파일 핸들 풀링 + `read_local_lines_by_indices` / `read_local_line_range` / `find_highlight_native` + `GET_PERFORMANCE_HEATMAP` 1회 배치 읽기로 초기 화면 렌더 및 스크롤/검색 최적화.
+- **메모리 다이어트 Phase 1~3 (`workerIndexView.ts`, `LogWorkerRegistry.ts`)**:
+  - **Lazy SAB**: 파일 모드에서 `80MB` `indexSharedBuffer` Eager 할당 제거 (`allocateStreamBuffers` 내부 지연 이동).
+  - **Virtual Identity View (`0MB`)**: 필터 미적용 시 `0..N-1` 배열 커밋 제거.
+  - **JS `lineOffsets` & 중복 캐시 제거**: JS 워커에서 `40–80MB` 오프셋 배열 보유 제거(히스토그램/전체복사 등 희소 분석 패널 오픈 시에만 `ensureLocalOffsetsLoaded` 지연 로드), >10만 매치 필터 캐시 JS 중복 보관 생략, `evict_log_cache`로 탭 종료/전환 시 즉시 회수, `INDEX_CACHE_MAX_FILES=2` / `FILTER_CACHE` 128MB·8-entry LRU 상한 적용.
+- **작업 관리자 실측 비교 (Windows Release 기준, 1GB 로그파일)**:
+  - **빈 앱 실행**: Electron `254.3MB` → v2.0.0 Tauri **`189.4MB`** (`WebView2 181.6MB` + `Rust 7.8MB`)
+  - **1GB 로드 후**: Electron `538.1MB` (`+283.8MB`) / 최적화 전 Tauri `541.5MB` (`WebView2 +158.5MB`) → v2.0.0 Tauri **`293.2MB`** (`WebView2 176.9MB [증가 0MB]` + `Rust 116.3MB`, CPU `0%`)
+  - **1단어 필터링 후**: Electron `659.2MB` → v2.0.0 Tauri **`305.9MB`** (`WebView2 182.1MB` + `Rust 123.8MB`, CPU `0%`)
+
 ---
 
 ## 🔮 향후 과제 (Next Mission)

@@ -58,10 +58,28 @@ class LogWorkerRegistry {
     terminateWorkers(tabId: string) {
         const pair = this.workers.get(tabId);
         if (pair) {
+            const candidatePaths = [pair.left.path, pair.right.path].filter(
+                (p): p is string => typeof p === 'string' && p.length > 0
+            );
             console.log(`[LogWorkerRegistry] Terminating workers for tab: ${tabId} 💥`);
             pair.left.worker.terminate();
             pair.right.worker.terminate();
             this.workers.delete(tabId);
+
+            if (candidatePaths.length > 0 && window.electronAPI?.evictLogCache) {
+                for (const p of candidatePaths) {
+                    let stillOpen = false;
+                    for (const rem of this.workers.values()) {
+                        if (rem.left.path === p || rem.right.path === p) {
+                            stillOpen = true;
+                            break;
+                        }
+                    }
+                    if (!stillOpen) {
+                        window.electronAPI.evictLogCache({ path: p }).catch(() => {});
+                    }
+                }
+            }
         }
     }
 

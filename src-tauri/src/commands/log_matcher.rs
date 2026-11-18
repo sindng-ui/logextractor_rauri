@@ -11,7 +11,7 @@ pub struct RustFilterRule {
 }
 
 #[derive(Clone)]
-struct AsciiPattern {
+pub struct AsciiPattern {
     lower: Vec<u8>,
     upper: Vec<u8>,
     bad_char_shift: [u8; 256],
@@ -20,7 +20,7 @@ struct AsciiPattern {
 }
 
 impl AsciiPattern {
-    fn compile(term: &str, case_sensitive: bool) -> Self {
+    pub fn compile(term: &str, case_sensitive: bool) -> Self {
         let raw = term.as_bytes();
         let len = raw.len();
         let mut lower = Vec::with_capacity(len);
@@ -57,7 +57,7 @@ impl AsciiPattern {
     }
 
     #[inline]
-    fn matches(&self, buf: &[u8]) -> bool {
+    pub fn matches(&self, buf: &[u8]) -> bool {
         let n_len = self.lower.len();
         if n_len == 0 {
             return true;
@@ -313,7 +313,7 @@ impl CompiledRule {
 }
 
 /// Strips `/\x1B\[[0-9;]*[a-zA-Z]/g` byte-for-byte
-fn strip_ansi_bytes(input: &[u8], out: &mut Vec<u8>) {
+pub fn strip_ansi_bytes(input: &[u8], out: &mut Vec<u8>) {
     out.clear();
     let len = input.len();
     let mut i = 0;

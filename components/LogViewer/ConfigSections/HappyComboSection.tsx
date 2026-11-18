@@ -48,8 +48,8 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
 
     // Ref to handle auto-focus on new branch creation
     const pendingBranchFocus = useRef<{ rootIdx: number, branchIdx: number } | null>(null);
-    // Ref to handle auto-focus on new root branch input after Tab-commit
-    const pendingNewRootBranchRef = useRef<string | null>(null);
+    // Ref to handle auto-focus on new root branch input after Enter/Tab-commit
+    const pendingNewRootBranchRef = useRef<{ root: string; branchIdx: number } | null>(null);
     // Draft state for adding a new empty root combo without triggering premature filtering
     const [isCreatingRoot, setIsCreatingRoot] = useState(false);
     const [draftFocusTrigger, setDraftFocusTrigger] = useState(0);
@@ -114,7 +114,14 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
         }
 
         if (focusNextBranchIdx !== undefined) {
-            pendingNewRootBranchRef.current = groupsToAdd[0][0];
+            const committedRoot = (groupsToAdd[0][0] || '').trim();
+            pendingNewRootBranchRef.current = { root: committedRoot, branchIdx: focusNextBranchIdx };
+            setCollapsedRoots(prev => {
+                if (!prev.has(committedRoot)) return prev;
+                const next = new Set(prev);
+                next.delete(committedRoot);
+                return next;
+            });
         }
         setIsCreatingRoot(false);
     };
@@ -130,13 +137,17 @@ export const HappyComboSection = React.memo<HappyComboSectionProps>(({
         }
 
         if (pendingNewRootBranchRef.current) {
-            const targetRootIdx = groupedRoots.findIndex(g => g.root === pendingNewRootBranchRef.current);
+            const { root, branchIdx } = pendingNewRootBranchRef.current;
+            const targetRootIdx = groupedRoots.findIndex(g => g.root === root);
             if (targetRootIdx > -1) {
-                const firstBranchPlusInput = document.querySelector(`input[data-add-tag="hc-${tabId}-${targetRootIdx}-0"]`) as HTMLInputElement;
+                const firstBranchPlusInput = document.querySelector(
+                    `input[data-add-tag="hc-${tabId}-${targetRootIdx}-${branchIdx}"]`
+                ) as HTMLInputElement;
                 if (firstBranchPlusInput) {
                     firstBranchPlusInput.focus();
+                    firstBranchPlusInput.scrollIntoView?.({ block: 'nearest' });
+                    pendingNewRootBranchRef.current = null;
                 }
-                pendingNewRootBranchRef.current = null;
             }
         }
     }, [groupedRoots, tabId]);

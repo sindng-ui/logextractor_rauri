@@ -13,6 +13,8 @@ export interface FilterRuleSnapshot {
 export interface FilterCacheEntry {
     snapshot: FilterRuleSnapshot;
     rawMatchedIndices: Int32Array;
+    matchCount?: number;
+    hasRawIndices?: boolean;
     totalLines: number;
 }
 
@@ -293,7 +295,11 @@ export class FilterCacheStore {
             }
 
             if (isStrictNarrowingSnapshot(entry.snapshot, nextSnapshot)) {
-                if (!bestSubset || entry.rawMatchedIndices.length < bestSubset.rawMatchedIndices.length) {
+                const entryCount = entry.matchCount ?? entry.rawMatchedIndices.length;
+                const bestCount = bestSubset
+                    ? (bestSubset.matchCount ?? bestSubset.rawMatchedIndices.length)
+                    : Infinity;
+                if (!bestSubset || entryCount < bestCount) {
                     bestSubset = entry;
                 }
             }
@@ -324,6 +330,9 @@ export const selectIncrementalFilterPlan = (ctx: PlanSelectionContext): Incremen
     }
 
     const { entry, exact } = match;
+    if (entry.hasRawIndices === false) {
+        return { mode: 'full-scan' };
+    }
     if (exact) {
         return { mode: 'exact-cache', sourceEntry: entry };
     }

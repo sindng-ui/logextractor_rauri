@@ -167,4 +167,57 @@ describe('HappyComboSection', () => {
             ],
         });
     });
+
+    it('commits root keyword on Enter and immediately focuses the next-line + tag input', () => {
+        const updateCurrentRuleSpy = vi.fn();
+
+        const StatefulHarness = () => {
+            const [rule, setRule] = React.useState<LogRule>(createBaseRule());
+            const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
+            const groupedRoots = React.useMemo(() => {
+                const map = new Map<string, { group: string[]; active: boolean; originalIdx: number; id?: string }[]>();
+                (rule.happyGroups || []).forEach((g, idx) => {
+                    const root = g.tags[0] || '';
+                    if (!map.has(root)) map.set(root, []);
+                    map.get(root)!.push({ group: g.tags, active: g.enabled, originalIdx: idx, id: g.id });
+                });
+                return Array.from(map.entries()).map(([root, items]) => ({
+                    root,
+                    isRootEnabled: items.some(i => i.active),
+                    items,
+                }));
+            }, [rule]);
+
+            return (
+                <HappyComboSection
+                    currentConfig={rule}
+                    updateCurrentRule={(updates) => {
+                        updateCurrentRuleSpy(updates);
+                        setRule(prev => ({ ...prev, ...updates }));
+                    }}
+                    groupedRoots={groupedRoots}
+                    collapsedRoots={collapsed}
+                    onToggleRootCollapse={vi.fn()}
+                    handleToggleRoot={vi.fn()}
+                    happyCombosCaseSensitive={false}
+                    tabId="tab-1"
+                    setCollapsedRoots={setCollapsed}
+                />
+            );
+        };
+
+        render(<StatefulHarness />);
+
+        fireEvent.click(screen.getByText('ADD COMBO'));
+        const rootInput = screen.getByPlaceholderText('Enter keyword...') as HTMLInputElement;
+        expect(document.activeElement).toBe(rootInput);
+
+        fireEvent.change(rootInput, { target: { value: 'Vibrator' } });
+        fireEvent.keyDown(rootInput, { key: 'Enter' });
+
+        expect(updateCurrentRuleSpy).toHaveBeenCalledTimes(1);
+        const committedPlusTag = document.querySelector('input[data-add-tag="hc-tab-1-0-0"]') as HTMLInputElement;
+        expect(committedPlusTag).toBeInTheDocument();
+        expect(document.activeElement).toBe(committedPlusTag);
+    });
 });

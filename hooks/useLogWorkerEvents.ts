@@ -60,28 +60,34 @@ export function useLogWorkerEvents() {
         // 2. 공통 이벤트 처리 (switch-case)
         switch (type) {
             case 'RPC_REQUEST': {
-                const method = payload?.method as
-                    | 'readFileSegment'
-                    | 'readFileSegmentsBatch'
-                    | 'indexLogFile'
-                    | 'filterLogFile'
-                    | undefined;
-                if (
-                    method === 'readFileSegment' ||
-                    method === 'readFileSegmentsBatch' ||
-                    method === 'indexLogFile' ||
-                    method === 'filterLogFile'
-                ) {
-                    const apiFn = window.electronAPI?.[method];
-                    if (!apiFn) {
-                        console.error(`[useLog-${pane}] window.electronAPI.${method} is missing!`);
-                        workerRef.current?.postMessage({
-                            type: 'RPC_ERROR',
-                            requestId,
-                            payload: `electronAPI.${method} is missing`
-                        });
-                        return;
-                    }
+                const binaryMethods = new Set([
+                    'readFileSegment',
+                    'readFileSegmentsBatch',
+                    'indexLogFile',
+                    'filterLogFile',
+                    'readLocalLinesByIndices',
+                    'readLocalLineRange',
+                ]);
+                const jsonMethods = new Set([
+                    'indexLogFileMeta',
+                    'evictLogCache',
+                    'findHighlightNative',
+                ]);
+                const method = payload?.method as string | undefined;
+                if (!method || (!binaryMethods.has(method) && !jsonMethods.has(method))) {
+                    break;
+                }
+                const apiFn = (window.electronAPI as any)?.[method];
+                if (!apiFn) {
+                    console.error(`[useLog-${pane}] window.electronAPI.${method} is missing!`);
+                    workerRef.current?.postMessage({
+                        type: 'RPC_ERROR',
+                        requestId,
+                        payload: `electronAPI.${method} is missing`
+                    });
+                    return;
+                }
+                if (binaryMethods.has(method)) {
                     (apiFn as (args: any) => Promise<Uint8Array>)(payload.args)
                         .then(chunkBuffer => {
                             const isStandaloneBuffer =
@@ -94,6 +100,23 @@ export function useLogWorkerEvents() {
                                 requestId,
                                 payload: finalBuffer
                             }, [finalBuffer.buffer]);
+                        })
+                        .catch(err => {
+                            console.error(`[useLog-${pane}] RPC_RESPONSE error:`, err);
+                            workerRef.current?.postMessage({
+                                type: 'RPC_ERROR',
+                                requestId,
+                                payload: err?.message || `${method} failed`
+                            });
+                        });
+                } else {
+                    (apiFn as (args: any) => Promise<any>)(payload.args)
+                        .then(result => {
+                            workerRef.current?.postMessage({
+                                type: 'RPC_RESPONSE',
+                                requestId,
+                                payload: result
+                            });
                         })
                         .catch(err => {
                             console.error(`[useLog-${pane}] RPC_RESPONSE error:`, err);

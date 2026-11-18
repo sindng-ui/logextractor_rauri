@@ -1,13 +1,15 @@
 use super::log_matcher::{CompiledRule, RustFilterRule};
+use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 use tauri::ipc::Response;
 
-const INDEX_CACHE_MAX_FILES: usize = 4;
-const FILTER_CACHE_MAX_ENTRIES: usize = 16;
+const INDEX_CACHE_MAX_FILES: usize = 2;
+const FILTER_CACHE_MAX_ENTRIES: usize = 8;
 const MAX_CACHED_MATCHES: usize = 5_000_000;
+const MAX_FILTER_CACHE_BYTES: usize = 128 * 1024 * 1024;
 const INDEX_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 const FILTER_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
@@ -202,8 +204,57 @@ pub async fn index_log_file(path: String) -> Result<Response, String> {
     Ok(Response::new(bytes))
 }
 
+#[tauri::command]
+pub async fn index_log_file_meta(path: String) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || {
+        let (file_len, _mod_ns, offsets) = get_or_index_file(&path)?;
+        Ok(json!({
+            "totalLines": offsets.len(),
+            "fileSize": file_len
+        }))
+    })
+    .await
+    .map_err(|e| format!("Join error in index_log_file_meta: {}", e))?
+}
+
+#[tauri::command]
+pub async fn evict_log_cache(path: Option<String>) -> Result<(), String> {
+    if let Ok(mut idx_cache) = get_index_cache().lock() {
+        match &path {
+            Some(p) => idx_cache.retain(|e| &e.path != p),
+            None => idx_cache.clear(),
+        }
+    }
+    if let Ok(mut flt_cache) = get_filter_cache().lock() {
+        match &path {
+            Some(p) => flt_cache.retain(|e| &e.path != p),
+            None => flt_cache.clear(),
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn get_cached_filter_matches(
+    path: &str,
+    file_len: u64,
+    modified_ns: u128,
+    snapshot_key: &str,
+) -> Option<Arc<Vec<u32>>> {
+    get_filter_cache().lock().ok().and_then(|cache| {
+        cache
+            .iter()
+            .find(|e| {
+                e.path == path
+                    && e.file_len == file_len
+                    && e.modified_ns == modified_ns
+                    && e.snapshot_key == snapshot_key
+            })
+            .map(|e| Arc::clone(&e.matches))
+    })
+}
+
 #[inline]
-fn line_slice_from_offsets<'a>(
+pub(crate) fn line_slice_from_offsets<'a>(
     buf: &'a [u8],
     chunk_base: u64,
     line_start: u64,
@@ -513,9 +564,6 @@ pub fn filter_log_file_sync(
                     && e.modified_ns == modified_ns
                     && e.snapshot_key == snapshot_key)
             });
-            if cache.len() >= FILTER_CACHE_MAX_ENTRIES {
-                cache.remove(0);
-            }
             cache.push(CachedFilter {
                 path,
                 file_len,
@@ -523,6 +571,13 @@ pub fn filter_log_file_sync(
                 snapshot_key,
                 matches: Arc::new(result_matches.clone()),
             });
+            let mut total_bytes: usize = cache.iter().map(|e| e.matches.len() * 4).sum();
+            while cache.len() > 1
+                && (cache.len() > FILTER_CACHE_MAX_ENTRIES || total_bytes > MAX_FILTER_CACHE_BYTES)
+            {
+                let evicted = cache.remove(0);
+                total_bytes = total_bytes.saturating_sub(evicted.matches.len() * 4);
+            }
         }
     }
 

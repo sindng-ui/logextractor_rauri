@@ -1,0 +1,42 @@
+[Tauri Memory Optimization (Phase 1 ~ Phase 3) Verification Results]
+Date: 2026-11-19
+
+1. Rust Cargo Check:
+   Command: cargo check --manifest-path src-tauri/Cargo.toml
+   Result: EXIT CODE 0 (Finished dev profile in 4.51s, 0 code errors/warnings)
+   Coverage:
+     - src-tauri/src/commands/log_engine.rs (674 lines: INDEX_CACHE_MAX_FILES=2, FILTER_CACHE 8-entry/128MB cap, index_log_file_meta, evict_log_cache)
+     - src-tauri/src/commands/log_reader.rs (544 lines: read_local_lines_by_indices, read_local_line_range, find_highlight_native + unit tests compiled)
+     - src-tauri/src/commands/file_io.rs (with_pooled_file)
+     - src-tauri/src/commands/log_matcher.rs (pub AsciiPattern, pub strip_ansi_bytes)
+     - src-tauri/src/lib.rs & mod.rs (command registration)
+
+2. Targeted Vitest Regression + New Unit Tests:
+   Command: npx vitest run test/workers test/hooks test/utils/byteLogFiltering.test.ts
+   Result: Test Files 19 passed (19), Tests 109 passed | 2 skipped (111) (6.71s)
+   Includes:
+     - test/workers/workerIndexView.test.ts (5/5 passed: identity view O(1), filtered array ops, lazy materialization, decodePackedLinesBinary UTF-8, metadata-only FilterCacheStore)
+     - test/workers/LogProcessor.worker.test.ts (11/11 passed)
+     - test/workers/workerDataReader.test.ts (7/7 passed)
+     - test/workers/workerBookmarkHandlers.test.ts (6/6 passed)
+     - test/workers/workerIncrementalFilter.test.ts (5/5 passed)
+     - test/workers/workerFilterExecutor.test.ts (7/7 passed)
+     - test/hooks/LogFilteringFlow.test.tsx (4/4 passed)
+     - test/hooks/useLogFilePersistenceTauri.test.tsx (7/7 passed)
+     - test/hooks/useLogPersistence.test.tsx (3/3 passed)
+     - test/utils/byteLogFiltering.test.ts (10/10 passed)
+
+3. Production Vite Bundle Build:
+   Command: npm run build
+   Result: EXIT CODE 0 (vite v6.4.5 built in 5.10s, 2844 modules transformed)
+
+4. File Line Counts Check (900-line rule):
+   - src-tauri/src/commands/log_reader.rs: 544 lines
+   - src-tauri/src/commands/log_engine.rs: 674 lines
+   - workers/workerIndexView.ts: 112 lines
+   - workers/workerDataReader.ts: 745 lines
+   - workers/workerBookmarkHandlers.ts: 90 lines
+   - hooks/useLogWorkerEvents.ts: 207 lines
+   Note: workers/LogProcessor.worker.ts and workers/workerAnalysisHandlers.ts remain pre-existing >900-line files; new logic was extracted into workers/workerIndexView.ts and src-tauri/src/commands/log_reader.rs.
+
+Note: Run `npm run tauri:build` and re-check Windows Task Manager RAM before/after opening the 1GB log file.

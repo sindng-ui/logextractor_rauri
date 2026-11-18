@@ -17,6 +17,13 @@ import {
     selectIncrementalFilterPlan,
 } from '../utils/incrementalFilter';
 import { executeIncrementalFilter } from './workerIncrementalFilter';
+import {
+    FilteredView,
+    decodePackedLinesBinary,
+    findVisualOfOriginal,
+    materializeViewIndices,
+    removeAtInt32,
+} from './workerIndexView';
 
 const ctx: Worker = self as any;
 ctx.onerror = (e) => {
@@ -87,40 +94,30 @@ let offsetSharedBuffer: any;
 let lineOffsetsStream: Uint32Array;
 let lengthSharedBuffer: any;
 let lineLengthsStream: Uint32Array;
-let indexSharedBuffer: any;
-let filteredIndicesBuffer: Int32Array;
+let indexSharedBuffer: any = null;
+let filteredIndicesBuffer: Int32Array | null = null;
 
-try {
-    if (typeof SharedArrayBuffer !== 'undefined') {
-        indexSharedBuffer = new SharedArrayBuffer(MAX_LINES * 4);
-        filteredIndicesBuffer = new Int32Array(indexSharedBuffer);
-        console.log('[Worker] indexSharedBuffer initialized successfully');
-    } else {
-        throw new Error('SharedArrayBuffer is NOT available');
-    }
-} catch (e) {
-    console.warn('[Worker] SharedArrayBuffer not supported.', e);
-    indexSharedBuffer = new ArrayBuffer(MAX_LINES * 4);
-    filteredIndicesBuffer = new Int32Array(indexSharedBuffer);
-}
-
-// ✅ Lazy Allocation for Stream mode (Saves 260MB per background tab in LocalFileMode)
+// ✅ Lazy Allocation for Stream mode (Saves 340MB including 80MB indexSharedBuffer when in File mode)
 let streamBuffersAllocated = false;
 const allocateStreamBuffers = () => {
     if (streamBuffersAllocated) return;
     try {
         if (typeof SharedArrayBuffer !== 'undefined') {
+            indexSharedBuffer = new SharedArrayBuffer(MAX_LINES * 4);
+            filteredIndicesBuffer = new Int32Array(indexSharedBuffer);
             logSharedBuffer = new SharedArrayBuffer(LOG_SAB_SIZE);
             logBuffer = new Uint8Array(logSharedBuffer);
             offsetSharedBuffer = new SharedArrayBuffer(MAX_LINES * 4);
             lineOffsetsStream = new Uint32Array(offsetSharedBuffer);
             lengthSharedBuffer = new SharedArrayBuffer(MAX_LINES * 4);
             lineLengthsStream = new Uint32Array(lengthSharedBuffer);
-            console.log('[Worker] Stream SharedArrayBuffers generated lazily (260MB)');
+            console.log('[Worker] Stream SharedArrayBuffers generated lazily (340MB)');
         } else {
             throw new Error('SAB NA');
         }
     } catch (e) {
+        indexSharedBuffer = new ArrayBuffer(MAX_LINES * 4);
+        filteredIndicesBuffer = new Int32Array(indexSharedBuffer);
         logSharedBuffer = new ArrayBuffer(LOG_SAB_SIZE);
         logBuffer = new Uint8Array(logSharedBuffer);
         offsetSharedBuffer = new ArrayBuffer(MAX_LINES * 4);
@@ -138,6 +135,9 @@ let logBufferPtr = 0;
 let timestampCache: Float64Array | null = null;
 let streamLineCount = 0;
 let filteredIndices: Int32Array | null = null;
+let isIdentityView = false;
+let localTotalLines = 0;
+let activeFilterSnapshotKey: string | null = null;
 const textEncoder = new TextEncoder();
 const sharedDecoder = new TextDecoder();
 
@@ -173,9 +173,50 @@ const respond = (response: LogWorkerResponse) => {
     ctx.postMessage(response);
 };
 
+// --- Helper: Identity / Memory-Lite View ---
+const getEffectiveTotalLines = (): number => {
+    if (isStreamMode) return streamLineCount;
+    if (isLocalFileMode && hasNativeEngine) return localTotalLines;
+    return lineOffsets ? lineOffsets.length : 0;
+};
+
+const getCurrentFilteredView = (): FilteredView => ({
+    isIdentity: isIdentityView && !isStreamMode,
+    totalLines: getEffectiveTotalLines(),
+    indices: filteredIndices,
+});
+
+const getVisualMatchCount = (): number =>
+    isIdentityView && !isStreamMode ? getEffectiveTotalLines() : (filteredIndices ? filteredIndices.length : 0);
+
+const setIdentityFileView = (lineCount: number) => {
+    isIdentityView = true;
+    localTotalLines = lineCount;
+    filteredIndices = null;
+    activeFilterSnapshotKey = null;
+    BookmarkManager.invalidateCache();
+};
+
+const evictPreviousLocalPathIfNeeded = (nextPath: string | null) => {
+    if (localFilePath && localFilePath !== nextPath && hasNativeEngine) {
+        rpcCall('evictLogCache', { path: localFilePath }).catch(() => {});
+    }
+};
+
+const ensureLocalOffsetsLoaded = async (): Promise<void> => {
+    if (lineOffsets || !isLocalFileMode || !localFilePath || !hasNativeEngine) return;
+    const rawOffsets: Uint8Array = await rpcCall('indexLogFile', { path: localFilePath });
+    const count = Math.floor(rawOffsets.byteLength / 8);
+    lineOffsets =
+        rawOffsets.byteOffset % 8 === 0
+            ? new BigInt64Array(rawOffsets.buffer, rawOffsets.byteOffset, count)
+            : new BigInt64Array(rawOffsets.slice().buffer);
+    localTotalLines = Math.max(1, count);
+};
+
 // --- Helper: Get Visual Bookmarks ---
 const invalidateBookmarkCache = () => BookmarkManager.invalidateCache();
-const getVisualBookmarks = (): number[] => BookmarkManager.getVisualBookmarks(filteredIndices);
+const getVisualBookmarks = (): number[] => BookmarkManager.getVisualBookmarksFromView(getCurrentFilteredView());
 
 // --- Helper: Merge Sorted Arrays (Unique) ---
 // Imported from ./workerUtils
@@ -187,9 +228,17 @@ const getSingleLineContent = async (originalIdx: number): Promise<string> => {
             const start = lineOffsetsStream[originalIdx];
             const len = lineLengthsStream[originalIdx];
             return sharedDecoder.decode(logBuffer.subarray(start, start + len).slice()).replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
-        } else if (isLocalFileMode && localFilePath) {
-            const offset = lineOffsets![originalIdx];
-            const nextOffset = originalIdx < lineOffsets!.length - 1 ? lineOffsets![originalIdx + 1] : BigInt(localFileSize);
+        } else if (isLocalFileMode && hasNativeEngine && localFilePath) {
+            const raw: Uint8Array = await rpcCall('readLocalLinesByIndices', {
+                path: localFilePath,
+                indices: [originalIdx],
+                stripAnsi: true,
+            });
+            const decoded = decodePackedLinesBinary(raw, sharedDecoder);
+            return decoded.length > 0 ? decoded[0].content : '';
+        } else if (isLocalFileMode && localFilePath && lineOffsets) {
+            const offset = lineOffsets[originalIdx];
+            const nextOffset = originalIdx < lineOffsets.length - 1 ? lineOffsets[originalIdx + 1] : BigInt(localFileSize);
             const uint8View = await rpcCall('readFileSegment', { path: localFilePath, start: Number(offset), end: Number(nextOffset) });
             return sharedDecoder.decode(uint8View).replace(/\r?\n$/, '').replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
         } else if (currentFile && lineOffsets) {
@@ -207,41 +256,17 @@ const getSingleLineContent = async (originalIdx: number): Promise<string> => {
 };
 
 const removeFromFilteredIndices = (visualIdx: number) => {
+    if (isIdentityView && !isStreamMode) return;
     if (!filteredIndices) return;
-    const newLen = filteredIndices.length - 1;
-    if (visualIdx < newLen) {
-        filteredIndicesBuffer.set(filteredIndicesBuffer.subarray(visualIdx + 1, filteredIndices.length), visualIdx);
-    }
-    filteredIndices = (filteredIndicesBuffer as any).subarray(0, newLen);
-    invalidateBookmarkCache();
-};
-
-const insertIntoFilteredIndicesSorted = (originalIdx: number) => {
-    if (!filteredIndices) return;
-    
-    // Find insertion point
-    let low = 0;
-    let high = filteredIndices.length - 1;
-    let insertAt = filteredIndices.length;
-
-    while (low <= high) {
-        const mid = (low + high) >>> 1;
-        if (filteredIndices[mid] === originalIdx) return; // Already exists
-        if (filteredIndices[mid] < originalIdx) {
-            low = mid + 1;
-            insertAt = low;
-        } else {
-            high = mid - 1;
-            insertAt = mid;
+    if (isStreamMode && filteredIndicesBuffer) {
+        const newLen = filteredIndices.length - 1;
+        if (visualIdx < newLen) {
+            filteredIndicesBuffer.set(filteredIndicesBuffer.subarray(visualIdx + 1, filteredIndices.length), visualIdx);
         }
+        filteredIndices = (filteredIndicesBuffer as any).subarray(0, newLen);
+    } else {
+        filteredIndices = removeAtInt32(filteredIndices, visualIdx);
     }
-
-    if (filteredIndices.length >= MAX_LINES) return;
-
-    // Shift right
-    filteredIndicesBuffer.set(filteredIndicesBuffer.subarray(insertAt, filteredIndices.length), insertAt + 1);
-    filteredIndicesBuffer[insertAt] = originalIdx;
-    filteredIndices = (filteredIndicesBuffer as any).subarray(0, filteredIndices.length + 1);
     invalidateBookmarkCache();
 };
 
@@ -266,6 +291,7 @@ const rpcCall = (method: string, args: any): Promise<any> => {
 
 // --- Handler: File Indexing ---
 const buildFileIndex = async (file: File) => {
+    evictPreviousLocalPathIfNeeded(null);
     isStreamMode = false;
     isLocalFileMode = false;
     localFilePath = null;
@@ -337,17 +363,7 @@ const buildFileIndex = async (file: File) => {
 
     // ✅ Optimization: Use subarray to avoid memory copy
     lineOffsets = tempOffsets.subarray(0, lineCount);
-
-    // ✅ Order Fix: Initialize filteredIndices BEFORE notifying the UI
-    if (lineCount <= filteredIndicesBuffer.length) {
-        for (let i = 0; i < lineCount; i++) filteredIndicesBuffer[i] = i;
-        filteredIndices = (filteredIndicesBuffer as any).subarray(0, lineCount);
-    } else {
-        // Fallback for extremely large files
-        const all = new Int32Array(lineCount);
-        for (let i = 0; i < lineCount; i++) all[i] = i;
-        filteredIndices = all as any;
-    }
+    setIdentityFileView(lineCount);
 
     respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress: 100 } });
     respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineCount } });
@@ -359,6 +375,7 @@ const buildFileIndex = async (file: File) => {
 
 // --- Handler: Local File Indexing (Native Rust SWAR or RPC 2GB+ OOM Free) ---
 const buildLocalFileIndex = async (path: string, size: number, useNativeEngine = false) => {
+    evictPreviousLocalPathIfNeeded(path);
     isStreamMode = false;
     isLiveStream = false;
     isLocalFileMode = true;
@@ -366,6 +383,7 @@ const buildLocalFileIndex = async (path: string, size: number, useNativeEngine =
     localFileSize = size;
     hasNativeEngine = useNativeEngine;
     currentFile = null;
+    lineOffsets = null;
     BookmarkManager.clearAll();
     isCalculatingHeatmap = false;
     currentFilterRequestId++;
@@ -379,18 +397,14 @@ const buildLocalFileIndex = async (path: string, size: number, useNativeEngine =
     if (useNativeEngine) {
         try {
             const t0 = performance.now();
-            const rawOffsets: Uint8Array = await rpcCall('indexLogFile', { path });
-            const count = Math.floor(rawOffsets.byteLength / 8);
-            const aligned =
-                rawOffsets.byteOffset % 8 === 0
-                    ? new BigInt64Array(rawOffsets.buffer, rawOffsets.byteOffset, count)
-                    : new BigInt64Array(rawOffsets.slice().buffer);
-            lineOffsets = aligned;
-            lineCount = Math.max(1, count);
+            const meta: { totalLines: number; fileSize: number } = await rpcCall('indexLogFileMeta', { path });
+            lineOffsets = null; // Held in Rust INDEX_CACHE only (0MB JS allocation!)
+            lineCount = Math.max(1, Number(meta?.totalLines || 1));
+            localTotalLines = lineCount;
             indexedNatively = true;
-            console.log(`[Worker] Native Rust SWAR indexing complete: ${lineCount} lines in ${(performance.now() - t0).toFixed(1)}ms`);
+            console.log(`[Worker] Native Rust SWAR meta-indexing complete: ${lineCount} lines in ${(performance.now() - t0).toFixed(1)}ms (0MB JS offsets)`);
         } catch (nativeErr) {
-            console.warn('[Worker] Native indexLogFile failed, falling back to chunked RPC:', nativeErr);
+            console.warn('[Worker] Native indexLogFileMeta failed, falling back to chunked RPC:', nativeErr);
             hasNativeEngine = false;
         }
     }
@@ -443,14 +457,7 @@ const buildLocalFileIndex = async (path: string, size: number, useNativeEngine =
         lineOffsets = tempOffsets.subarray(0, lineCount);
     }
 
-    if (lineCount <= filteredIndicesBuffer.length) {
-        for (let i = 0; i < lineCount; i++) filteredIndicesBuffer[i] = i;
-        filteredIndices = (filteredIndicesBuffer as any).subarray(0, lineCount);
-    } else {
-        const all = new Int32Array(lineCount);
-        for (let i = 0; i < lineCount; i++) all[i] = i;
-        filteredIndices = all as any;
-    }
+    setIdentityFileView(lineCount);
 
     respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress: 100 } });
     respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineCount } });
@@ -462,12 +469,19 @@ const buildLocalFileIndex = async (path: string, size: number, useNativeEngine =
 
 // --- Handler: Stream Init ---
 const initStream = (payload?: { isLive?: boolean }) => {
+    evictPreviousLocalPathIfNeeded(null);
     isStreamMode = true;
     isLiveStream = payload?.isLive !== false;
+    isIdentityView = false;
+    isLocalFileMode = false;
+    hasNativeEngine = false;
+    localFilePath = null;
+    localTotalLines = 0;
+    activeFilterSnapshotKey = null;
     currentFile = null;
     lineOffsets = null;
 
-    allocateStreamBuffers(); // ✅ Lazily allocate 260MB buffers ONLY when stream starts
+    allocateStreamBuffers(); // ✅ Lazily allocate Stream SharedArrayBuffers ONLY when stream starts
 
     // Reset Binary Store
     logBufferPtr = 0;
@@ -564,7 +578,7 @@ const processChunk = (chunk: string) => {
             const currentLen = filteredIndices ? filteredIndices.length : 0;
             const requiredLen = currentLen + 1;
 
-            if (requiredLen <= filteredIndicesBuffer.length) {
+            if (filteredIndicesBuffer && requiredLen <= filteredIndicesBuffer.length) {
                 filteredIndicesBuffer[currentLen] = streamLineCount;
                 filteredIndices = (filteredIndicesBuffer as any).subarray(0, requiredLen);
             } else {
@@ -650,34 +664,33 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 
     // Optimization for empty rule (Both File and Stream modes)
     if (normalizedRule.excludes.length === 0 && normalizedRule.includeGroups.length === 0 && currentQuickFilter === 'none') {
-        const lineCount = isStreamMode ? streamLineCount : (lineOffsets ? lineOffsets.length : 0);
+        const lineCount = getEffectiveTotalLines();
         const safeMatchCount = Math.min(lineCount, MAX_LINES);
-        
-        console.log(`[Worker-Debug] 🚀 Dynamic Empty rule bypass TRIGGERED! safeMatchCount: ${safeMatchCount}, totalLines: ${lineCount}`);
-        
-        // 🐧 형님! 최초 인덱싱 당시 이미 filteredIndices가 전체 라인으로 초기화된 상태라면 수천만 번의 중복 루프를 건너뜁니다!
-        const isAlreadyIdentityInitialized =
-            filteredIndices !== null &&
-            filteredIndices.length === lineCount &&
-            (lineCount === 0 || (filteredIndices[0] === 0 && filteredIndices[lineCount - 1] === lineCount - 1));
 
-        if (!isAlreadyIdentityInitialized) {
-            if (lineCount <= filteredIndicesBuffer.length) {
-                for (let i = 0; i < lineCount; i++) {
-                    filteredIndicesBuffer[i] = i;
+        if (!isStreamMode) {
+            setIdentityFileView(lineCount);
+        } else if (filteredIndicesBuffer) {
+            const isAlreadyIdentityInitialized =
+                filteredIndices !== null &&
+                filteredIndices.length === lineCount &&
+                (lineCount === 0 || (filteredIndices[0] === 0 && filteredIndices[lineCount - 1] === lineCount - 1));
+
+            if (!isAlreadyIdentityInitialized) {
+                if (lineCount <= filteredIndicesBuffer.length) {
+                    for (let i = 0; i < lineCount; i++) {
+                        filteredIndicesBuffer[i] = i;
+                    }
+                    filteredIndices = (filteredIndicesBuffer as any).subarray(0, lineCount);
+                } else {
+                    const all = new Int32Array(lineCount);
+                    for (let i = 0; i < lineCount; i++) {
+                        all[i] = i;
+                    }
+                    filteredIndices = all as any;
                 }
-                filteredIndices = (filteredIndicesBuffer as any).subarray(0, lineCount);
-            } else {
-                // 대용량 파일 대응 Fallback
-                const all = new Int32Array(lineCount);
-                for (let i = 0; i < lineCount; i++) {
-                    all[i] = i;
-                }
-                filteredIndices = all as any;
             }
         }
 
-        // Notify UI about shared buffers structure
         sendSharedBuffers();
 
         respond({ type: 'FILTER_COMPLETE', payload: { matchCount: safeMatchCount, totalLines: lineCount, visualBookmarks: getVisualBookmarks() } });
@@ -685,7 +698,7 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 
         if (timestampCache) {
             calculateHistogram({
-                filteredIndices,
+                filteredIndices: materializeViewIndices(getCurrentFilteredView()),
                 timestampCache,
                 respond,
                 currentFile,
@@ -697,31 +710,51 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
     }
 
     // --- High Performance Parallel / Incremental Filtering (Common for File and Stream) ---
-    const totalLines = isStreamMode ? streamLineCount : (lineOffsets ? lineOffsets.length : 0);
+    const totalLines = getEffectiveTotalLines();
     const filterSnapshot = normalizeFilterSnapshot(normalizedRule, currentQuickFilterVal);
+    const NATIVE_JS_CACHE_LIMIT = 100_000;
 
     const finalizeFilterMatches = (finalMatches: Int32Array, shouldRecordCache: boolean) => {
         if (filterRequestId !== currentFilterRequestId) return;
 
         if (shouldRecordCache && finalMatches.length <= MAX_LINES) {
-            filterCache.record({
-                snapshot: filterSnapshot,
-                rawMatchedIndices: finalMatches,
-                totalLines,
-            });
+            if (isLocalFileMode && hasNativeEngine && finalMatches.length > NATIVE_JS_CACHE_LIMIT) {
+                filterCache.record({
+                    snapshot: filterSnapshot,
+                    rawMatchedIndices: new Int32Array(0),
+                    matchCount: finalMatches.length,
+                    hasRawIndices: false,
+                    totalLines,
+                });
+            } else {
+                filterCache.record({
+                    snapshot: filterSnapshot,
+                    rawMatchedIndices: finalMatches,
+                    matchCount: finalMatches.length,
+                    hasRawIndices: true,
+                    totalLines,
+                });
+            }
         }
 
         // --- Merge Bookmarks (Persistent Visualization) ---
         const bookmarks = BookmarkManager.getOriginalBookmarksSorted();
         const mergedMatches = mergeSortedUnique(finalMatches, bookmarks);
 
-        // ✅ Prevent Shared Buffer size overflow
         const safeMatchCount = Math.min(mergedMatches.length, MAX_LINES);
-        filteredIndicesBuffer.set(mergedMatches.subarray(0, safeMatchCount));
-        filteredIndices = (filteredIndicesBuffer as any).subarray(0, safeMatchCount);
+        if (isStreamMode && filteredIndicesBuffer) {
+            filteredIndicesBuffer.set(mergedMatches.subarray(0, safeMatchCount));
+            filteredIndices = (filteredIndicesBuffer as any).subarray(0, safeMatchCount);
+        } else {
+            isIdentityView = false;
+            activeFilterSnapshotKey = filterSnapshot.key;
+            filteredIndices = safeMatchCount < mergedMatches.length
+                ? mergedMatches.subarray(0, safeMatchCount)
+                : mergedMatches;
+        }
 
         if (finalMatches.length > MAX_LINES) {
-            console.warn(`[Worker] Match count (${finalMatches.length}) exceeds SharedBuffer capacity (${MAX_LINES}). Truncating results.`);
+            console.warn(`[Worker] Match count (${finalMatches.length}) exceeds capacity (${MAX_LINES}). Truncating results.`);
         }
 
         // ✅ Order Fix: Send shared buffers BEFORE completing filtering notification
@@ -752,12 +785,15 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 
     if (isLocalFileMode && localFilePath && hasNativeEngine && !isStreamMode) {
         const cachedMatch = filterCache.findBestParent(filterSnapshot, totalLines);
-        if (cachedMatch?.exact) {
+        if (cachedMatch?.exact && cachedMatch.entry.hasRawIndices !== false) {
             console.log(`[Worker] Native engine exact-cache hit (${cachedMatch.entry.rawMatchedIndices.length} matches)`);
             finalizeFilterMatches(cachedMatch.entry.rawMatchedIndices, false);
             return;
         }
-        if (cachedMatch && cachedMatch.entry.rawMatchedIndices.length === 0) {
+        const cachedCount = cachedMatch
+            ? (cachedMatch.entry.matchCount ?? cachedMatch.entry.rawMatchedIndices.length)
+            : -1;
+        if (cachedMatch && cachedCount === 0) {
             console.log(`[Worker] Native engine empty-instant hit (0 matches)`);
             finalizeFilterMatches(new Int32Array(0), true);
             return;
@@ -794,7 +830,9 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
         } catch (nativeFilterErr) {
             if (filterRequestId !== currentFilterRequestId) return;
             console.warn('[Worker] Native filterLogFile failed, falling back to JS/SubWorker path:', nativeFilterErr);
+            await ensureLocalOffsetsLoaded().catch(() => {});
             hasNativeEngine = false;
+            filterCache.clear();
         }
     }
 
@@ -934,8 +972,13 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
 // --- Helper: Get DataReader Context ---
 const getDataReaderContext = (): DataReader.DataReaderContext => ({
     filteredIndices,
+    isIdentityView: isIdentityView && !isStreamMode,
+    identityTotalLines: getEffectiveTotalLines(),
     isStreamMode,
     isLocalFileMode,
+    hasNativeEngine,
+    activeFilterSnapshotKey,
+    bookmarksSorted: BookmarkManager.getOriginalBookmarksSorted(),
     localFilePath,
     localFileSize,
     rpcCall,
@@ -954,8 +997,11 @@ const getAnalysisContext = (): AnalysisHandlers.WorkerContext => ({
     currentFile,
     lineOffsets,
     filteredIndices,
+    isIdentityView: isIdentityView && !isStreamMode,
+    identityTotalLines: getEffectiveTotalLines(),
     isStreamMode,
     isLocalFileMode,
+    hasNativeEngine,
     localFilePath,
     localFileSize,
     rpcCall,
@@ -965,6 +1011,15 @@ const getAnalysisContext = (): AnalysisHandlers.WorkerContext => ({
     respond,
     currentRule
 });
+
+const getMaterializedAnalysisContext = async (): Promise<AnalysisHandlers.WorkerContext> => {
+    await ensureLocalOffsetsLoaded();
+    return {
+        ...getAnalysisContext(),
+        lineOffsets,
+        filteredIndices: materializeViewIndices(getCurrentFilteredView()),
+    };
+};
 
 // --- Message Listener ---
 ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
@@ -978,9 +1033,9 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                 console.log('[Worker] Tab became inactive, terminating idle sub-workers to save CPU/RAM');
                 terminateSubWorkers();
             } else {
-                console.log('[Worker] Tab activated → SubWorkers will be respawned on next filter or index');
-                if (currentFile || isLocalFileMode || isStreamMode) {
-                    initSubWorkers(); // Spawn immediately upon activation for warm-up
+                if ((currentFile || (isLocalFileMode && !hasNativeEngine) || isStreamMode)) {
+                    console.log('[Worker] Tab activated → SubWorkers warming up');
+                    initSubWorkers();
                 }
             }
             break;
@@ -997,20 +1052,19 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
             }
             break;
         case 'INIT_FILE':
-            if (currentFile && currentFile.name === payload.name && currentFile.size === payload.size && filteredIndices) {
+            if (currentFile && currentFile.name === payload.name && currentFile.size === payload.size && (isIdentityView || filteredIndices)) {
                 console.log(`[LogProcessorWorker-${workerId}] Ignoring redundant INIT_FILE for: ${payload.name} ♻️`);
                 respond({ type: 'STATUS_UPDATE', payload: { status: 'ready' } });
-                respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineOffsets ? lineOffsets.length : 0 } });
+                respond({ type: 'INDEX_COMPLETE', payload: { totalLines: getEffectiveTotalLines() } });
                 return;
             }
-            // Hotfix: Payload itself is a File object, so pass it directly.
             await buildFileIndex(payload);
             break;
         case 'INIT_LOCAL_FILE_STREAM':
-            if (localFilePath === payload.path && filteredIndices) {
+            if (localFilePath === payload.path && (isIdentityView || filteredIndices)) {
                 console.log(`[LogProcessorWorker-${workerId}] Ignoring redundant INIT_LOCAL_FILE_STREAM for: ${payload.path} ♻️`);
                 respond({ type: 'STATUS_UPDATE', payload: { status: 'ready' } });
-                respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineOffsets ? lineOffsets.length : 0 } });
+                respond({ type: 'INDEX_COMPLETE', payload: { totalLines: getEffectiveTotalLines() } });
                 return;
             }
             await buildLocalFileIndex(payload.path, payload.size, !!payload.hasNativeEngine);
@@ -1039,45 +1093,40 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
         case 'FILTER_LOGS':
             await applyFilter(payload);
             break;
-        case 'TOGGLE_BOOKMARK':
-            const toggleResult = BookmarkManager.toggleBookmark(payload.visualIndex, filteredIndices);
+        case 'TOGGLE_BOOKMARK': {
+            const toggleResult = BookmarkManager.toggleBookmarkFromView(payload.visualIndex, getCurrentFilteredView());
             if (toggleResult) {
                 const { originalIndex, isAdded } = toggleResult;
-                if (!isAdded) {
-                    // Removed: check if it still matches filter
+                if (!isAdded && !(isIdentityView && !isStreamMode)) {
                     const content = await getSingleLineContent(originalIndex);
                     const isMatch = checkIsMatch(content, currentRule, false, currentQuickFilter, wasmEngine, wasmMemory || undefined, textEncoder);
                     if (!isMatch) {
-                        // Remove from view as it's no longer bookmarked and doesn't match filter
                         removeFromFilteredIndices(payload.visualIndex);
                     }
-                } else {
-                    // Added: it's already in view since user clicked it
                 }
-                
-                // Always notify UI of updated bookmarks and match count (in case it changed)
+
                 respond({
                     type: 'FILTER_COMPLETE',
                     payload: {
-                        matchCount: filteredIndices ? filteredIndices.length : 0,
-                        totalLines: isStreamMode ? streamLineCount : (lineOffsets ? lineOffsets.length : 0),
+                        matchCount: getVisualMatchCount(),
+                        totalLines: getEffectiveTotalLines(),
                         visualBookmarks: getVisualBookmarks()
                     }
                 });
             }
             break;
+        }
         case 'CLEAR_BOOKMARKS':
             BookmarkManager.clearBookmarks(respond);
             if (currentRule && (currentRule.excludes.length > 0 || currentRule.includeGroups.length > 0 || currentQuickFilter !== 'none')) {
-                // Re-apply filter to remove lines that were only visible because of bookmarks
                 await applyFilter(currentRule as any);
             }
             break;
         case 'GET_LINES':
             if (payload.startLine === undefined && payload.startFilterIndex !== undefined) {
-                payload.startLine = payload.startFilterIndex; // Fallback for transition
+                payload.startLine = payload.startFilterIndex;
             }
-            if (!filteredIndices) {
+            if (!isIdentityView && !filteredIndices) {
                 console.warn(`[LogProcessorWorker-${workerId}] GET_LINES called but filteredIndices is null! (File: ${currentFile?.name || localFilePath}, Mode: ${isLocalFileMode ? 'Local' : (isStreamMode ? 'Stream' : 'File')})`);
             }
             await DataReader.getLines(getDataReaderContext(), payload.startLine, payload.count, requestId || '');
@@ -1101,11 +1150,12 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
             await DataReader.findHighlight(getDataReaderContext(), payload.keyword, payload.startIndex, payload.direction, requestId || '');
             break;
         case 'GET_FULL_TEXT':
+            await ensureLocalOffsetsLoaded();
             await DataReader.getFullText(getDataReaderContext(), requestId || '');
             break;
         case 'ANALYZE_TRANSACTION':
             try {
-                await AnalysisHandlers.analyzeTransaction(getAnalysisContext(), payload.identity, requestId || '');
+                await AnalysisHandlers.analyzeTransaction(await getMaterializedAnalysisContext(), payload.identity, requestId || '');
             } catch (e) {
                 console.error('[Worker] ANALYZE_TRANSACTION failed', e);
                 respond({ type: 'ERROR', payload: { error: 'Transaction analysis failed' }, requestId });
@@ -1117,10 +1167,12 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                 set current(val) { isCalculatingHeatmap = val; }
             });
             break;
-        case 'REQUEST_HISTOGRAM':
+        case 'REQUEST_HISTOGRAM': {
+            await ensureLocalOffsetsLoaded();
+            const histIndices = materializeViewIndices(getCurrentFilteredView());
             if (timestampCache) {
                 calculateHistogram({
-                    filteredIndices,
+                    filteredIndices: histIndices,
                     timestampCache,
                     respond,
                     currentFile,
@@ -1132,7 +1184,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                 buildTimestampCache({
                     currentFile,
                     lineOffsets,
-                    filteredIndices,
+                    filteredIndices: histIndices,
                     isStreamMode,
                     isLocalFileMode,
                     localFilePath,
@@ -1145,7 +1197,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                     isBuildingTimestampCache = false;
                     timestampCache = cache;
                     calculateHistogram({
-                        filteredIndices,
+                        filteredIndices: materializeViewIndices(getCurrentFilteredView()),
                         timestampCache,
                         respond,
                         currentFile,
@@ -1158,9 +1210,10 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                 });
             }
             break;
+        }
         case 'PERF_ANALYSIS':
             try {
-                await AnalysisHandlers.analyzePerformance(getAnalysisContext(), payload, requestId || '');
+                await AnalysisHandlers.analyzePerformance(await getMaterializedAnalysisContext(), payload, requestId || '');
             } catch (e) {
                 console.error('[Worker] PERF_ANALYSIS failed', e);
                 respond({ type: 'PERF_ANALYSIS_RESULT', payload: null, requestId });
@@ -1168,7 +1221,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
             break;
         case 'ANALYZE_SPAM':
             try {
-                await AnalysisHandlers.analyzeSpamLogs(getAnalysisContext(), requestId || '');
+                await AnalysisHandlers.analyzeSpamLogs(await getMaterializedAnalysisContext(), requestId || '');
             } catch (e) {
                 console.error('[Worker] ANALYZE_SPAM failed', e);
                 respond({ type: 'SPAM_ANALYSIS_RESULT', payload: { results: [] }, requestId } as any);
@@ -1176,7 +1229,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
             break;
         case 'ANALYZE_LATENCY':
             try {
-                await AnalysisHandlers.analyzeLatencySpots(getAnalysisContext(), payload, requestId || '');
+                await AnalysisHandlers.analyzeLatencySpots(await getMaterializedAnalysisContext(), payload, requestId || '');
             } catch (e) {
                 console.error('[Worker] ANALYZE_LATENCY failed', e);
                 respond({ type: 'LATENCY_ANALYSIS_RESULT', payload: { results: [] }, requestId });
@@ -1184,7 +1237,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
             break;
         case 'GET_ALL_METADATA':
             try {
-                await AnalysisHandlers.extractAllMetadata(getAnalysisContext(), requestId || '');
+                await AnalysisHandlers.extractAllMetadata(await getMaterializedAnalysisContext(), requestId || '');
             } catch (e) {
                 console.error('[Worker] GET_ALL_METADATA failed', e);
                 respond({ type: 'ALL_METADATA_RESULT', payload: { metadata: [] }, requestId } as any);
@@ -1193,7 +1246,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
         case 'GET_ANALYSIS_METRICS':
             try {
                 console.log(`[LogProcessorWorker] GET_ANALYSIS_METRICS message caught in switch.`);
-                await AnalysisHandlers.extractAnalysisMetrics(getAnalysisContext(), payload, requestId || '', respond);
+                await AnalysisHandlers.extractAnalysisMetrics(await getMaterializedAnalysisContext(), payload, requestId || '', respond);
             } catch (e) {
                 console.error('[Worker] GET_ANALYSIS_METRICS failed', e);
                 respond({ type: 'ANALYSIS_METRICS_RESULT', payload: { metrics: {} }, requestId } as any);
@@ -1201,20 +1254,17 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
             break;
         case 'GET_ALIAS_EVENTS':
             try {
-                await AnalysisHandlers.extractAliasEvents(getAnalysisContext(), requestId || '');
+                await AnalysisHandlers.extractAliasEvents(await getMaterializedAnalysisContext(), requestId || '');
             } catch (e) {
                 console.error('[Worker] GET_ALIAS_EVENTS failed', e);
                 respond({ type: 'ALIAS_EVENTS_RESULT', payload: { events: [] }, requestId } as any);
             }
             break;
-        case 'FIND_VISUAL_INDEX':
-            if (filteredIndices) {
-                const visualIndex = filteredIndices.indexOf(payload.absoluteIndex);
-                respond({ type: 'FIND_RESULT', payload: { foundIndex: visualIndex }, requestId: requestId || '' });
-            } else {
-                respond({ type: 'FIND_RESULT', payload: { foundIndex: -1 }, requestId: requestId || '' });
-            }
+        case 'FIND_VISUAL_INDEX': {
+            const visualIndex = findVisualOfOriginal(getCurrentFilteredView(), payload.absoluteIndex);
+            respond({ type: 'FIND_RESULT', payload: { foundIndex: visualIndex }, requestId: requestId || '' });
             break;
+        }
         case 'SEARCH_GLOBAL_MISSION':
             try {
                 const rule: LogRule = payload.rule;
@@ -1236,9 +1286,47 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                     break;
                 }
 
-                const totalLines = isStreamMode ? streamLineCount : (lineOffsets ? lineOffsets.length : 0);
-                const results: Array<{ lineNum: number; content: string }> = [];
                 const maxMatches = 3000;
+                if (isLocalFileMode && hasNativeEngine && localFilePath && !isStreamMode) {
+                    const globalKey = `__global_mission__${JSON.stringify({
+                        hc: isHappyCase,
+                        bc: isBlockCase,
+                        ex: normalizedRule.excludes,
+                        inc: normalizedRule.includeGroups,
+                    })}`;
+                    const rawMatches: Uint8Array = await rpcCall('filterLogFile', {
+                        path: localFilePath,
+                        rule: {
+                            quickFilter: 'none',
+                            happyCombosCaseSensitive: isHappyCase,
+                            blockListCaseSensitive: isBlockCase,
+                            excludes: normalizedRule.excludes,
+                            includeGroups: normalizedRule.includeGroups,
+                        },
+                        snapshotKey: globalKey,
+                        parentKey: null,
+                    });
+                    const count = Math.min(maxMatches, Math.floor(rawMatches.byteLength / 4));
+                    const dv = new DataView(rawMatches.buffer, rawMatches.byteOffset, rawMatches.byteLength);
+                    const topIndices: number[] = new Array(count);
+                    for (let k = 0; k < count; k++) {
+                        topIndices[k] = dv.getUint32(k * 4, true);
+                    }
+                    const packed: Uint8Array = count > 0
+                        ? await rpcCall('readLocalLinesByIndices', {
+                            path: localFilePath,
+                            indices: topIndices,
+                            stripAnsi: true,
+                        })
+                        : new Uint8Array(0);
+                    const decoded = decodePackedLinesBinary(packed, sharedDecoder);
+                    const nativeResults = decoded.map(r => ({ lineNum: r.lineIdx, content: r.content }));
+                    respond({ type: 'SEARCH_GLOBAL_MISSION_RESULT', payload: { results: nativeResults }, requestId } as any);
+                    break;
+                }
+
+                const totalLines = getEffectiveTotalLines();
+                const results: Array<{ lineNum: number; content: string }> = [];
                 let matchCount = 0;
 
                 const decoder = new TextDecoder();

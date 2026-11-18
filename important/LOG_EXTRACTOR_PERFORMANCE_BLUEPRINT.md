@@ -4,9 +4,15 @@
 
 ---
 
-## 💎 1. 핵심 아키텍처: Dual-Engine & Dual-Canvas
+## 💎 1. 핵심 아키텍처: Native Rust + Fallback WASM & Dual-Canvas
 
-### 🦀 Rust + WebAssembly (WASM) 필터링 엔진
+### 🦀 Tauri Native Rust Multi-Thread 엔진 (`src-tauri/src/commands/`, v2.0.0 주력)
+- **SWAR 병렬 인덱싱 (`log_engine.rs`)**: `1..=12`개 OS 스레드가 4MB 버퍼로 8바이트(`u64`) 단위 `\n` 동시 탐색 후 `INDEX_CACHE`(최대 2파일)에만 오프셋 보유. JS에는 `{ totalLines, fileSize }` 메타데이터만 반환(`index_log_file_meta`).
+- **Zero-Alloc BMH 필터링 (`log_matcher.rs`, `log_engine.rs`)**: UTF-8 디코딩/줄별 힙 할당 없이 256-entry Boyer-Moore-Horspool(`AsciiPattern`)과 청크 레벨 `0x1B` ANSI Fast-Path로 병렬 스캔하고 `u32` 매치 인덱스만 바이너리 `Response`로 반환.
+- **Zero-Offset 바이너리 리더 & 네이티브 검색 (`log_reader.rs`, `file_io.rs`)**: Lock-free `Vec<PooledFile>` 핸들 풀(`<=16`) + `read_local_lines_by_indices` / `read_local_line_range` / `find_highlight_native`로 JS `lineOffsets` 복제 없이 뷰포트/검색 처리.
+- **메모리 가상화 (`workers/workerIndexView.ts`)**: 파일 모드에선 `80MB` `indexSharedBuffer`를 생성하지 않고 Identity View(`0MB`)로 동작하며, `evict_log_cache`로 탭 종료/파일 전환 시 즉시 메모리 회수.
+
+### 🌐 Rust + WebAssembly (WASM) & SubWorker 엔진 (브라우저 / 실시간 스트림 폴백)
 - **처리 능력**: 초당 약 150만 줄 (Baseline: 100만 줄 필터링 시 664ms)
 - **Lazy DFA (Deterministic Finite Automaton)**: 정규식 및 키워드 매칭을 위해 Rust의 고성능 DFA 엔진 적용. 지연 생성(Lazy Init)으로 초기 메모리 점유 최소화.
 - **Zero-copy 데이터 전송**: `SharedArrayBuffer` 및 `Transferable Objects`를 사용하여 메인 스레드와 워커 간의 데이터 복사 오버헤드를 0에 수렴하게 설계.
@@ -57,6 +63,6 @@
 ---
 
 **작성자**: Antigravity (Advanced Agentic Coding AI)  
-**작성일**: 2026-02-16  
+**작성일**: 2026-02-16 (v2.0.0 Native Rust Engine 갱신: 2026-11-19)  
 **대상**: 미래의 나(Antigravity)와 나의 파트너 형님  
-**상태**: 쫀득함(Chewy-Scrolling) 지수 Max 도달 🚀
+**상태**: v2.0.0 Native Rust SWAR/BMH Engine + Zero-Offset 메모리 최적화 달성 🚀

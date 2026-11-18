@@ -1,22 +1,9 @@
-// --- Helper: Binary Search ---
-function binarySearch(arr: Int32Array, val: number): number {
-    let low = 0;
-    let high = arr.length - 1;
-
-    while (low <= high) {
-        const mid = (low + high) >>> 1;
-        const midVal = arr[mid];
-
-        if (midVal === val) {
-            return mid;
-        } else if (midVal < val) {
-            low = mid + 1;
-        } else {
-            high = mid - 1;
-        }
-    }
-    return -1;
-}
+import {
+    FilteredView,
+    findVisualOfOriginal,
+    getOriginalAt,
+    getViewLength,
+} from './workerIndexView';
 
 let originalBookmarks: Set<number> = new Set();
 let bookmarkCache: number[] = [];
@@ -34,64 +21,67 @@ export const BookmarkManager = {
     getOriginalBookmarksSorted: (): number[] => {
         return Array.from(originalBookmarks).sort((a, b) => a - b);
     },
-    getVisualBookmarks: (filteredIndices: Int32Array | null): number[] => {
-        if (!filteredIndices) return [];
+    getVisualBookmarksFromView: (view: FilteredView): number[] => {
+        const len = getViewLength(view);
+        if (len === 0) return [];
 
-        // ✅ Check if cache is still valid
-        if (!bookmarkCacheDirty && filteredIndices.length === lastFilteredIndicesLength) {
+        if (!bookmarkCacheDirty && len === lastFilteredIndicesLength) {
             return bookmarkCache;
         }
 
-        // Rebuild cache
         const visualBookmarks: number[] = [];
-
-        // Optimization: filteredIndices is always sorted.
-        // Instead of iterating all N visible lines (can be millions),
-        // we iterate K bookmarks (usually small) and binary search them in filteredIndices.
-        // complexity: O(K * log N) where K << N usually.
         originalBookmarks.forEach(originalIdx => {
-            const vIdx = binarySearch(filteredIndices, originalIdx);
+            const vIdx = findVisualOfOriginal(view, originalIdx);
             if (vIdx !== -1) {
                 visualBookmarks.push(vIdx);
             }
         });
 
-        // ✅ Update cache
         bookmarkCache = visualBookmarks;
         bookmarkCacheDirty = false;
-        lastFilteredIndicesLength = filteredIndices.length;
+        lastFilteredIndicesLength = len;
 
         return visualBookmarks;
     },
-    toggleBookmark: (
+    getVisualBookmarks: (filteredIndices: Int32Array | null): number[] => {
+        return BookmarkManager.getVisualBookmarksFromView({
+            isIdentity: false,
+            totalLines: filteredIndices ? filteredIndices.length : 0,
+            indices: filteredIndices,
+        });
+    },
+    toggleBookmarkFromView: (
         visualIndex: number,
-        filteredIndices: Int32Array | null
+        view: FilteredView
     ): { originalIndex: number, isAdded: boolean } | null => {
-        if (!filteredIndices) {
-            console.warn('[Worker] Toggle Bookmark: No filtered indices available');
+        const len = getViewLength(view);
+        const originalIndex = getOriginalAt(view, visualIndex);
+        if (originalIndex === -1) {
+            console.warn(`[Worker] Toggle Bookmark: Index out of bounds (visual=${visualIndex}, max=${len})`);
             return null;
         }
-        if (visualIndex < 0 || visualIndex >= filteredIndices.length) {
-            console.warn(`[Worker] Toggle Bookmark: Index out of bounds (visual=${visualIndex}, max=${filteredIndices.length})`);
-            return null;
-        }
-
-        const originalIndex = filteredIndices[visualIndex];
-        console.log(`[Worker] Toggling Bookmark: Visual=${visualIndex} -> Original=${originalIndex}`);
 
         let isAdded = false;
         if (originalBookmarks.has(originalIndex)) {
             originalBookmarks.delete(originalIndex);
-            console.log(`[Worker] Bookmark REMOVED (Total: ${originalBookmarks.size})`);
             isAdded = false;
         } else {
             originalBookmarks.add(originalIndex);
-            console.log(`[Worker] Bookmark ADDED (Total: ${originalBookmarks.size})`);
             isAdded = true;
         }
 
         BookmarkManager.invalidateCache();
         return { originalIndex, isAdded };
+    },
+    toggleBookmark: (
+        visualIndex: number,
+        filteredIndices: Int32Array | null
+    ): { originalIndex: number, isAdded: boolean } | null => {
+        return BookmarkManager.toggleBookmarkFromView(visualIndex, {
+            isIdentity: false,
+            totalLines: filteredIndices ? filteredIndices.length : 0,
+            indices: filteredIndices,
+        });
     },
     clearBookmarks: (respond: (response: any) => void) => {
         BookmarkManager.clearAll();

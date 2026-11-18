@@ -183,6 +183,82 @@ export function createTauriElectronAPI() {
             return toUint8Array(raw);
         },
 
+        indexLogFileMeta: async ({
+            path,
+        }: {
+            path: string;
+        }): Promise<{ totalLines: number; fileSize: number }> => {
+            return await invoke<{ totalLines: number; fileSize: number }>('index_log_file_meta', {
+                path,
+            });
+        },
+
+        evictLogCache: async ({ path }: { path?: string | null }): Promise<void> => {
+            await invoke('evict_log_cache', { path: path ?? null });
+        },
+
+        readLocalLinesByIndices: async ({
+            path,
+            indices,
+            stripAnsi,
+        }: {
+            path: string;
+            indices: number[];
+            stripAnsi: boolean;
+        }): Promise<Uint8Array> => {
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+                'read_local_lines_by_indices',
+                { path, indices, stripAnsi }
+            );
+            return toUint8Array(raw);
+        },
+
+        readLocalLineRange: async ({
+            path,
+            startLine,
+            count,
+            stripAnsi,
+        }: {
+            path: string;
+            startLine: number;
+            count: number;
+            stripAnsi: boolean;
+        }): Promise<Uint8Array> => {
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+                'read_local_line_range',
+                { path, startLine, count, stripAnsi }
+            );
+            return toUint8Array(raw);
+        },
+
+        findHighlightNative: async ({
+            path,
+            filterKey,
+            bookmarks,
+            keyword,
+            startVisualIdx,
+            direction,
+            caseSensitive,
+        }: {
+            path: string;
+            filterKey?: string | null;
+            bookmarks?: number[] | null;
+            keyword: string;
+            startVisualIdx: number;
+            direction: 'next' | 'prev';
+            caseSensitive: boolean;
+        }): Promise<{ supported: boolean; foundIndex?: number; originalLineNum?: number }> => {
+            return await invoke('find_highlight_native', {
+                path,
+                filterKey: filterKey ?? null,
+                bookmarks: bookmarks ?? null,
+                keyword,
+                startVisualIdx,
+                direction,
+                caseSensitive,
+            });
+        },
+
         filterLogFile: async ({
             path,
             rule,

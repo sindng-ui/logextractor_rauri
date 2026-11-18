@@ -1,9 +1,21 @@
 import { LogRule, LogWorkerResponse } from '../types';
+import {
+    FilteredView,
+    decodePackedLinesBinary,
+    findVisualOfOriginal,
+    getOriginalAt,
+    getViewLength,
+} from './workerIndexView';
 
 export interface DataReaderContext {
     filteredIndices: Int32Array | null;
+    isIdentityView?: boolean;
+    identityTotalLines?: number;
     isStreamMode: boolean;
     isLocalFileMode?: boolean;
+    hasNativeEngine?: boolean;
+    activeFilterSnapshotKey?: string | null;
+    bookmarksSorted?: number[];
     localFilePath?: string | null;
     localFileSize?: number;
     rpcCall?: (method: string, args: any) => Promise<any>;
@@ -20,6 +32,14 @@ export interface DataReaderContext {
 
 const sharedDecoder = new TextDecoder();
 
+function contextToView(context: DataReaderContext): FilteredView {
+    return {
+        isIdentity: !!context.isIdentityView,
+        totalLines: context.identityTotalLines ?? 0,
+        indices: context.filteredIndices,
+    };
+}
+
 export function binarySearch(arr: Int32Array, val: number): number {
     let low = 0;
     let high = arr.length - 1;
@@ -35,17 +55,19 @@ export function binarySearch(arr: Int32Array, val: number): number {
 
 export const getLines = async (context: DataReaderContext, startFilterIndex: number, count: number, requestId: string) => {
     const { filteredIndices, isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, respond } = context;
+    const view = contextToView(context);
+    const totalVisible = getViewLength(view);
 
-    if (!filteredIndices) {
+    if (totalVisible === 0 && !view.isIdentity && !filteredIndices) {
         respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
         return;
     }
 
     const resultLines: { lineNum: number, content: string }[] = [];
-    const max = Math.min(startFilterIndex + count, filteredIndices.length);
+    const max = Math.min(startFilterIndex + count, totalVisible);
 
     if (isStreamMode) {
-        if (!logBuffer || !lineOffsetsStream || !lineLengthsStream) {
+        if (!filteredIndices || !logBuffer || !lineOffsetsStream || !lineLengthsStream) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
@@ -60,27 +82,49 @@ export const getLines = async (context: DataReaderContext, startFilterIndex: num
             const text = rawText.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
             resultLines.push({ lineNum: originalIdx + 1, content: text });
         }
+    } else if (context.isLocalFileMode && context.hasNativeEngine && context.localFilePath && context.rpcCall) {
+        if (startFilterIndex >= max) {
+            respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
+            return;
+        }
+        try {
+            const indices: number[] = new Array(max - startFilterIndex);
+            for (let i = startFilterIndex; i < max; i++) {
+                indices[i - startFilterIndex] = getOriginalAt(view, i);
+            }
+            const raw: Uint8Array = await context.rpcCall('readLocalLinesByIndices', {
+                path: context.localFilePath,
+                indices,
+                stripAnsi: true,
+            });
+            const decoded = decodePackedLinesBinary(raw, sharedDecoder);
+            for (const row of decoded) {
+                resultLines.push({ lineNum: row.lineIdx + 1, content: row.content });
+            }
+        } catch (err) {
+            console.error('[DataReader] Native readLocalLinesByIndices failed', err);
+            respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
+            return;
+        }
     } else {
         if (!context.isLocalFileMode && !currentFile) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
 
-        if (!lineOffsets || !filteredIndices) {
+        if (!lineOffsets || (!view.isIdentity && !filteredIndices)) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
 
-        const maxFile = Math.min(startFilterIndex + count, filteredIndices.length);
-
-        if (startFilterIndex >= maxFile) {
+        if (startFilterIndex >= max) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
 
         try {
-            const MAX_GAP_BYTES = 10 * 1024 * 1024; // 💡 512KB -> 10MB Increase: Modern SSDs are much faster at batch reads than frequent small reads! 🐧🚀
-            const MAX_CHUNK_BYTES = 20 * 1024 * 1024; // 10MB -> 20MB Increase
+            const MAX_GAP_BYTES = 10 * 1024 * 1024;
+            const MAX_CHUNK_BYTES = 20 * 1024 * 1024;
 
             interface ReadChunk {
                 minByte: bigint;
@@ -92,8 +136,8 @@ export const getLines = async (context: DataReaderContext, startFilterIndex: num
             let currentChunk: ReadChunk | null = null;
             const fileSize = context.isLocalFileMode ? context.localFileSize! : currentFile!.size;
 
-            for (let i = startFilterIndex; i < maxFile; i++) {
-                const idx = filteredIndices[i];
+            for (let i = startFilterIndex; i < max; i++) {
+                const idx = getOriginalAt(view, i);
                 const startByte = lineOffsets[idx];
                 const endByte = idx < lineOffsets.length - 1 ? lineOffsets[idx + 1] : BigInt(fileSize);
 
@@ -114,11 +158,6 @@ export const getLines = async (context: DataReaderContext, startFilterIndex: num
             }
             if (currentChunk) chunks.push(currentChunk);
 
-            // 📊 Hyungnim, printing chunk stats to verify successful merging!
-            const totalBytes = chunks.reduce((sum, c) => sum + (c.maxByte - c.minByte), 0n);
-            console.log(`[DataReader] Batch Fetching: ${chunks.length} chunks, total ${Number(totalBytes / 1024n)}KB (Avg: ${chunks.length > 0 ? Number(totalBytes / BigInt(chunks.length) / 1024n) : 0}KB per chunk)`);
-
-            // 💡 Parallel processing optimization: Slightly adjusted concurrency to 15 for more efficient IPC bandwidth usage.
             const CONCURRENCY_LIMIT = 15;
             const results: { lineNum: number, content: string }[] = [];
 
@@ -134,7 +173,7 @@ export const getLines = async (context: DataReaderContext, startFilterIndex: num
                     }
 
                     for (const k of chunk.lineIndices) {
-                        const originalIdx = filteredIndices[k];
+                        const originalIdx = getOriginalAt(view, k);
                         const lineStart = lineOffsets[originalIdx];
                         const lineEnd = originalIdx < lineOffsets.length - 1 ? lineOffsets[originalIdx + 1] : BigInt(fileSize);
 
@@ -153,7 +192,6 @@ export const getLines = async (context: DataReaderContext, startFilterIndex: num
                 }
             };
 
-            // Concurrency control looping
             for (let i = 0; i < chunks.length; i += CONCURRENCY_LIMIT) {
                 const batch = chunks.slice(i, i + CONCURRENCY_LIMIT);
                 await Promise.all(batch.map(processChunk));
@@ -172,25 +210,45 @@ export const getLines = async (context: DataReaderContext, startFilterIndex: num
     respond({ type: 'LINES_DATA', payload: { lines: resultLines }, requestId });
 };
 
+const readLocalRangeLines = async (
+    context: DataReaderContext,
+    startIdx: number,
+    count: number,
+    stripAnsi: boolean
+): Promise<{ lineNum: number; content: string }[]> => {
+    const raw: Uint8Array = await context.rpcCall!('readLocalLineRange', {
+        path: context.localFilePath,
+        startLine: startIdx,
+        count,
+        stripAnsi,
+    });
+    const decoded = decodePackedLinesBinary(raw, sharedDecoder);
+    return decoded.map(row => ({ lineNum: row.lineIdx + 1, content: row.content }));
+};
+
 export const getRawLines = async (context: DataReaderContext, startLineNum: number, count: number, requestId: string) => {
     const { isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, respond } = context;
     const startIdx = startLineNum;
-    const resultLines: { lineNum: number, content: string }[] = [];
+    let resultLines: { lineNum: number, content: string }[] = [];
 
     if (isStreamMode) {
         if (!logBuffer || !lineOffsetsStream || !lineLengthsStream) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
-        // streamLineCount is not directly in context, so check lineOffsetsStream length or inject from outside
-        // However, context expansion is recommended for loop range limitation. Temporary safety patch.
         const max = Math.min(startIdx + count, lineOffsetsStream.length);
         for (let i = startIdx; i < max; i++) {
             const start = lineOffsetsStream[i];
             const len = lineLengthsStream[i];
-            if (len === 0 && start === 0 && i > 0) break; // Break if empty data segment reached (rough safety guard)
+            if (len === 0 && start === 0 && i > 0) break;
             const text = sharedDecoder.decode(logBuffer.subarray(start, start + len).slice());
             resultLines.push({ lineNum: i + 1, content: text });
+        }
+    } else if (context.isLocalFileMode && context.hasNativeEngine && context.localFilePath && context.rpcCall) {
+        try {
+            resultLines = await readLocalRangeLines(context, startIdx, count, true);
+        } catch (err) {
+            console.error('[Worker] Native getRawLines failed', err);
         }
     } else {
         if (!context.isLocalFileMode && !currentFile) {
@@ -240,7 +298,7 @@ export const getRawLines = async (context: DataReaderContext, startLineNum: numb
 
 export const getSurroundingLines = async (context: DataReaderContext, absoluteIndex: number, count: number, requestId: string) => {
     const { isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, respond } = context;
-    const resultLines: { lineNum: number, content: string }[] = [];
+    let resultLines: { lineNum: number, content: string }[] = [];
 
     const startIdx = Math.max(0, absoluteIndex - Math.floor(count / 2));
 
@@ -249,7 +307,6 @@ export const getSurroundingLines = async (context: DataReaderContext, absoluteIn
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
-        // Use lineOffsetsStream.length instead of streamLineCount (including safety guard)
         const max = Math.min(startIdx + count, lineOffsetsStream.length);
         for (let i = startIdx; i < max; i++) {
             const start = lineOffsetsStream[i];
@@ -257,6 +314,12 @@ export const getSurroundingLines = async (context: DataReaderContext, absoluteIn
             if (len === 0 && start === 0 && i > 0) break;
             const text = sharedDecoder.decode(logBuffer.subarray(start, start + len).slice());
             resultLines.push({ lineNum: i + 1, content: text });
+        }
+    } else if (context.isLocalFileMode && context.hasNativeEngine && context.localFilePath && context.rpcCall) {
+        try {
+            resultLines = await readLocalRangeLines(context, startIdx, count, false);
+        } catch (err) {
+            console.error('[Worker] Native getSurroundingLines failed', err);
         }
     } else {
         if (!context.isLocalFileMode && !currentFile) {
@@ -303,8 +366,10 @@ export const getSurroundingLines = async (context: DataReaderContext, absoluteIn
 
 export const getLinesByIndices = async (context: DataReaderContext, indices: number[], requestId: string, isAbsolute: boolean = false) => {
     const { filteredIndices, isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, respond } = context;
+    const view = contextToView(context);
+    const totalVisible = getViewLength(view);
 
-    if (!filteredIndices) {
+    if (totalVisible === 0 && !view.isIdentity && !filteredIndices) {
         respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
         return;
     }
@@ -313,7 +378,7 @@ export const getLinesByIndices = async (context: DataReaderContext, indices: num
     const sortedIndices = [...indices].sort((a, b) => a - b);
 
     if (isStreamMode) {
-        if (!logBuffer || !lineOffsetsStream || !lineLengthsStream) {
+        if (!filteredIndices || !logBuffer || !lineOffsetsStream || !lineLengthsStream) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
             return;
         }
@@ -339,6 +404,43 @@ export const getLinesByIndices = async (context: DataReaderContext, indices: num
                 });
             }
         }
+    } else if (context.isLocalFileMode && context.hasNativeEngine && context.localFilePath && context.rpcCall) {
+        const mapped: Array<{ visualIdx: number; originalIdx: number }> = [];
+        const requestLineIndices: number[] = [];
+        for (const idx of sortedIndices) {
+            const visualIdx = isAbsolute ? findVisualOfOriginal(view, idx) : idx;
+            const originalIdx = isAbsolute ? idx : getOriginalAt(view, idx);
+            if (originalIdx !== -1 && visualIdx !== -1) {
+                mapped.push({ visualIdx, originalIdx });
+                requestLineIndices.push(originalIdx);
+            }
+        }
+        if (requestLineIndices.length > 0) {
+            try {
+                const raw: Uint8Array = await context.rpcCall('readLocalLinesByIndices', {
+                    path: context.localFilePath,
+                    indices: requestLineIndices,
+                    stripAnsi: false,
+                });
+                const decoded = decodePackedLinesBinary(raw, sharedDecoder);
+                const contentMap = new Map<number, string>();
+                for (const row of decoded) {
+                    contentMap.set(row.lineIdx, row.content);
+                }
+                for (const item of mapped) {
+                    const content = contentMap.get(item.originalIdx);
+                    if (content !== undefined) {
+                        resultLines.push({
+                            lineNum: item.originalIdx + 1,
+                            content,
+                            formattedLineIndex: item.visualIdx,
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('[DataReader] Native getLinesByIndices failed', err);
+            }
+        }
     } else {
         if (!context.isLocalFileMode && !currentFile) {
             respond({ type: 'LINES_DATA', payload: { lines: [] }, requestId });
@@ -359,15 +461,8 @@ export const getLinesByIndices = async (context: DataReaderContext, indices: num
         };
 
         for (const idx of sortedIndices) {
-            let visualIdx = idx;
-            let originalIdx = -1;
-
-            if (isAbsolute) {
-                visualIdx = binarySearch(filteredIndices, idx);
-                originalIdx = idx;
-            } else if (idx >= 0 && idx < filteredIndices.length) {
-                originalIdx = filteredIndices[idx];
-            }
+            const visualIdx = isAbsolute ? findVisualOfOriginal(view, idx) : idx;
+            const originalIdx = isAbsolute ? idx : getOriginalAt(view, idx);
 
             if (originalIdx !== -1 && visualIdx !== -1 && originalIdx < lineOffsets.length) {
                 const startByte = Number(lineOffsets[originalIdx]);
@@ -397,8 +492,10 @@ export const getLinesByIndices = async (context: DataReaderContext, indices: num
 
 export const findHighlight = async (context: DataReaderContext, keyword: string, startFilterIndex: number, direction: 'next' | 'prev', requestId: string) => {
     const { filteredIndices, isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, currentRule, respond } = context;
+    const view = contextToView(context);
+    const totalVisible = getViewLength(view);
 
-    if (!filteredIndices) {
+    if (totalVisible === 0 && !view.isIdentity && !filteredIndices) {
         respond({ type: 'FIND_RESULT', payload: { foundIndex: -1 }, requestId });
         return;
     }
@@ -410,7 +507,7 @@ export const findHighlight = async (context: DataReaderContext, keyword: string,
     const effectiveKeyword = isCaseSensitive ? keyword : keyword.toLowerCase();
 
     if (isStreamMode) {
-        if (!logBuffer || !lineOffsetsStream || !lineLengthsStream) return;
+        if (!filteredIndices || !logBuffer || !lineOffsetsStream || !lineLengthsStream) return;
         while (searchIdx >= 0 && searchIdx < filteredIndices.length) {
             const originalIdx = filteredIndices[searchIdx];
             const start = lineOffsetsStream[originalIdx];
@@ -422,6 +519,59 @@ export const findHighlight = async (context: DataReaderContext, keyword: string,
                 return;
             }
             if (direction === 'next') searchIdx++; else searchIdx--;
+        }
+    } else if (context.isLocalFileMode && context.hasNativeEngine && context.localFilePath && context.rpcCall) {
+        try {
+            const res: { supported: boolean; foundIndex?: number; originalLineNum?: number } =
+                await context.rpcCall('findHighlightNative', {
+                    path: context.localFilePath,
+                    filterKey: view.isIdentity ? null : (context.activeFilterSnapshotKey ?? null),
+                    bookmarks: view.isIdentity ? null : (context.bookmarksSorted ?? null),
+                    keyword,
+                    startVisualIdx: startFilterIndex,
+                    direction,
+                    caseSensitive: isCaseSensitive,
+                });
+            if (res && res.supported) {
+                respond({
+                    type: 'FIND_RESULT',
+                    payload: { foundIndex: res.foundIndex ?? -1, originalLineNum: res.originalLineNum ?? -1 },
+                    requestId,
+                });
+                return;
+            }
+        } catch (err) {
+            console.warn('[DataReader] findHighlightNative failed, using batch scan fallback:', err);
+        }
+
+        const BATCH = 2000;
+        let cur = searchIdx;
+        while (cur >= 0 && cur < totalVisible) {
+            const batchVisuals: number[] = [];
+            const batchOriginals: number[] = [];
+            for (let k = 0; k < BATCH && cur >= 0 && cur < totalVisible; k++) {
+                batchVisuals.push(cur);
+                batchOriginals.push(getOriginalAt(view, cur));
+                cur += direction === 'next' ? 1 : -1;
+            }
+            const raw: Uint8Array = await context.rpcCall('readLocalLinesByIndices', {
+                path: context.localFilePath,
+                indices: batchOriginals,
+                stripAnsi: false,
+            });
+            const decoded = decodePackedLinesBinary(raw, sharedDecoder);
+            for (let k = 0; k < decoded.length; k++) {
+                const line = decoded[k].content;
+                const lineCheck = isCaseSensitive ? line : line.toLowerCase();
+                if (lineCheck.includes(effectiveKeyword)) {
+                    respond({
+                        type: 'FIND_RESULT',
+                        payload: { foundIndex: batchVisuals[k], originalLineNum: batchOriginals[k] + 1 },
+                        requestId,
+                    });
+                    return;
+                }
+            }
         }
     } else {
         if (!context.isLocalFileMode && !currentFile) return;
@@ -435,8 +585,8 @@ export const findHighlight = async (context: DataReaderContext, keyword: string,
             });
         };
 
-        while (searchIdx >= 0 && searchIdx < filteredIndices.length) {
-            const originalLineNum = filteredIndices[searchIdx];
+        while (searchIdx >= 0 && searchIdx < totalVisible) {
+            const originalLineNum = getOriginalAt(view, searchIdx);
             const startByte = Number(lineOffsets[originalLineNum]);
             const fileSize = context.isLocalFileMode ? context.localFileSize! : currentFile!.size;
             const endByte = originalLineNum < lineOffsets.length - 1 ? Number(lineOffsets[originalLineNum + 1]) : fileSize;
@@ -464,14 +614,16 @@ export const findHighlight = async (context: DataReaderContext, keyword: string,
 
 export const getFullText = async (context: DataReaderContext, requestId: string) => {
     const { filteredIndices, isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, respond, postMessage } = context;
+    const view = contextToView(context);
+    const totalVisible = getViewLength(view);
 
-    if (!filteredIndices) {
+    if (totalVisible === 0 && !view.isIdentity && !filteredIndices) {
         respond({ type: 'FULL_TEXT_DATA', payload: { text: '' }, requestId } as any);
         return;
     }
 
     if (isStreamMode) {
-        if (!logBuffer || !lineOffsetsStream || !lineLengthsStream) {
+        if (!filteredIndices || !logBuffer || !lineOffsetsStream || !lineLengthsStream) {
             respond({ type: 'FULL_TEXT_DATA', payload: { text: '' }, requestId } as any);
             return;
         }
@@ -508,12 +660,12 @@ export const getFullText = async (context: DataReaderContext, requestId: string)
         let rangeStartIdx = 0;
         let totalLen = 0;
 
-        for (let i = 0; i < filteredIndices.length; i++) {
-            const currentLine = filteredIndices[i];
-            const nextLine = (i + 1 < filteredIndices.length) ? filteredIndices[i + 1] : -2;
+        for (let i = 0; i < totalVisible; i++) {
+            const currentLine = getOriginalAt(view, i);
+            const nextLine = (i + 1 < totalVisible) ? getOriginalAt(view, i + 1) : -2;
 
             if (nextLine !== currentLine + 1) {
-                const startLine = filteredIndices[rangeStartIdx];
+                const startLine = getOriginalAt(view, rangeStartIdx);
                 const endLine = currentLine;
 
                 const startByte = Number(lineOffsets[startLine]);

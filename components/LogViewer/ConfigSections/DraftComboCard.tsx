@@ -152,7 +152,7 @@ export const DraftComboCard: React.FC<DraftComboCardProps> = ({
                         if (e.key === 'Enter') {
                             e.preventDefault();
                             if (hasRootKeyword) {
-                                tryCommit();
+                                tryCommit(0);
                             }
                         } else if (e.key === 'Tab' && !e.shiftKey) {
                             e.preventDefault();

@@ -61,6 +61,16 @@ fn return_pooled_file(path: String, file: File) {
     }
 }
 
+pub(crate) fn with_pooled_file<F, R>(path: &str, f: F) -> Result<R, String>
+where
+    F: FnOnce(&mut File) -> Result<R, String>,
+{
+    let mut file = pop_pooled_file(path)?;
+    let res = f(&mut file)?;
+    return_pooled_file(path.to_string(), file);
+    Ok(res)
+}
+
 pub fn read_segment_bytes(path: String, start: u64, end: u64) -> Result<Vec<u8>, String> {
     if end <= start {
         return Ok(Vec::new());

@@ -1,6 +1,6 @@
 [package]
 name = "happytool-tauri"
-version = "1.5.5"
+version = "2.0.0"
 description = "HappyTool Light - High-Performance Log Analyzer (Tauri 2.0)"
 authors = ["granular.sim <granular.sim@samsung.com>"]
 edition = "2021"

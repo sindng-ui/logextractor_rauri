@@ -2,13 +2,17 @@ import { LogRule, LogWorkerResponse, LogMetadata } from '../types';
 import { extractTimestamp } from '../utils/logTime';
 import { extractSourceMetadata, analyzePerfSegments, extractLogIds } from '../utils/perfAnalysis';
 import { extractSingleMetadata, PointMetrics, isSignificant, extractAliasFromLine, AliasEvent, SequenceItem, getFormattedSig } from './SplitAnalysisUtils';
+import { decodePackedLinesBinary, getOriginalAt, getViewLength } from './workerIndexView';
 
 export interface WorkerContext {
     currentFile: File | null;
     lineOffsets: BigInt64Array | null;
     filteredIndices: Int32Array | null;
+    isIdentityView?: boolean;
+    identityTotalLines?: number;
     isStreamMode: boolean;
     isLocalFileMode?: boolean;
+    hasNativeEngine?: boolean;
     localFilePath?: string | null;
     localFileSize?: number;
     rpcCall?: (method: string, args: any) => Promise<any>;
@@ -166,20 +170,26 @@ export const getPerformanceHeatmap = async (
     isCalculatingHeatmapRef: { current: boolean }
 ) => {
     const { filteredIndices, isStreamMode, logBuffer, lineOffsetsStream, lineLengthsStream, currentFile, lineOffsets, respond } = ctx;
+    const view = {
+        isIdentity: !!ctx.isIdentityView,
+        totalLines: ctx.identityTotalLines ?? 0,
+        indices: filteredIndices,
+    };
+    const totalLines = getViewLength(view);
 
     if (isCalculatingHeatmapRef.current) {
         console.log(`[Worker] Heatmap calculation skipped: Already calculating. (req: ${requestId})`);
         return;
     }
 
-    const hasFileData = (!isStreamMode && currentFile && lineOffsets) || (ctx.isLocalFileMode && lineOffsets);
+    const hasNativeLocal = !isStreamMode && !!ctx.isLocalFileMode && !!ctx.hasNativeEngine && !!ctx.localFilePath && !!ctx.rpcCall;
+    const hasFileData = hasNativeLocal || (!isStreamMode && currentFile && lineOffsets) || (ctx.isLocalFileMode && lineOffsets);
     const hasStreamData = isStreamMode && logBuffer && lineOffsetsStream && lineLengthsStream;
 
-    if (!filteredIndices || (!hasFileData && !hasStreamData)) {
+    if ((!view.isIdentity && !filteredIndices) || (!hasFileData && !hasStreamData)) {
         return;
     }
 
-    const totalLines = filteredIndices.length;
     if (totalLines < 2) {
         respond({ type: 'HEATMAP_DATA', payload: { heatmap: [] }, requestId });
         return;
@@ -191,6 +201,44 @@ export const getPerformanceHeatmap = async (
         const sampleSize = Math.max(1, Math.floor(totalLines / points));
         const decoder = new TextDecoder();
 
+        if (hasNativeLocal) {
+            const sampleIndices: number[] = [];
+            const pairSlots: Array<{ slot: number; idx1: number; idx2: number }> = [];
+            for (let i = 0; i < points; i++) {
+                const startIdx = i * sampleSize;
+                if (startIdx >= totalLines - 1) break;
+                const idx1 = getOriginalAt(view, startIdx);
+                const idx2 = getOriginalAt(view, startIdx + 1);
+                if (idx1 !== -1 && idx2 !== -1) {
+                    sampleIndices.push(idx1, idx2);
+                    pairSlots.push({ slot: i, idx1, idx2 });
+                }
+            }
+            if (sampleIndices.length > 0) {
+                const raw: Uint8Array = await ctx.rpcCall!('readLocalLinesByIndices', {
+                    path: ctx.localFilePath,
+                    indices: sampleIndices,
+                    stripAnsi: false,
+                });
+                const decoded = decodePackedLinesBinary(raw, decoder);
+                const tsMap = new Map<number, number | null>();
+                for (const row of decoded) {
+                    if (!tsMap.has(row.lineIdx)) {
+                        tsMap.set(row.lineIdx, extractTimestamp(row.content));
+                    }
+                }
+                for (const p of pairSlots) {
+                    const t1 = tsMap.get(p.idx1) ?? null;
+                    const t2 = tsMap.get(p.idx2) ?? null;
+                    if (t1 !== null && t2 !== null) {
+                        heatmap[p.slot] = Math.min(1.0, Math.abs(t2 - t1) / 1000);
+                    }
+                }
+            }
+            respond({ type: 'HEATMAP_DATA', payload: { heatmap: Array.from(heatmap) }, requestId });
+            return;
+        }
+
         for (let i = 0; i < points; i++) {
             if (i > 0 && i % 50 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
@@ -199,8 +247,8 @@ export const getPerformanceHeatmap = async (
             if (startIdx >= totalLines - 1) break;
 
             try {
-                const idx1 = filteredIndices[startIdx];
-                const idx2 = filteredIndices[startIdx + 1];
+                const idx1 = getOriginalAt(view, startIdx);
+                const idx2 = getOriginalAt(view, startIdx + 1);
 
                 let t1: number | null = null;
                 let t2: number | null = null;
