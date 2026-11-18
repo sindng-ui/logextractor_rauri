@@ -83,15 +83,16 @@ const TizenConnectionModal: React.FC<TizenConnectionModalProps> = memo(({
     const isHandedOver = React.useRef(false);
     const timeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
-    const startTimeout = () => {
+    const startTimeout = (ms: number = 15000) => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        const secs = Math.round(ms / 1000);
         timeoutRef.current = setTimeout(() => {
             setIsConnecting(false);
             setIsScanning(false);
             setIsSerialLoading(false);
-            setStatus('Connection timed out (12s). Please try again.');
-            setError('Request timed out (12s). Please check your connection.');
-        }, 12000);
+            setStatus(`Connection timed out (${secs}s). Please try again.`);
+            setError(`Request timed out (${secs}s). Please check your connection.`);
+        }, ms);
     };
 
     const clearConnectionTimeout = () => {
@@ -133,8 +134,8 @@ const TizenConnectionModal: React.FC<TizenConnectionModalProps> = memo(({
                 console.log('[TizenModal] Serial ports received:', ports);
                 setSerialPorts(ports);
                 setIsSerialLoading(false);
-                if (ports.length > 0 && !serialPort) {
-                    setSerialPort(ports[0].path);
+                if (ports.length > 0) {
+                    setSerialPort(prev => (!prev || !ports.some((p: { path: string }) => p.path === prev)) ? ports[0].path : prev);
                 }
             });
 
@@ -181,14 +182,18 @@ const TizenConnectionModal: React.FC<TizenConnectionModalProps> = memo(({
             });
 
             newSocket.on('sdb_status', (data) => {
-                clearConnectionTimeout();
                 setStatus(data.message);
+                if (data.status === 'reconnecting' || data.status === 'connecting') {
+                    startTimeout(20000);
+                    return;
+                }
+                clearConnectionTimeout();
                 if (data.status === 'connected') {
                     setIsConnected(true);
                     isHandedOver.current = true;
                     onStreamStart(newSocket!, `SDB:${selectedDeviceId || 'Default'}`, 'sdb', saveToFile);
                     onClose();
-                } else if (data.status !== 'reconnecting') {
+                } else {
                     setIsConnecting(false);
                     if (data.status === 'disconnected') setIsConnected(false);
                 }
@@ -227,7 +232,8 @@ const TizenConnectionModal: React.FC<TizenConnectionModalProps> = memo(({
         if (!socket) return;
         setError('');
         setIsConnecting(true);
-        startTimeout();
+        const timeoutMs = mode === 'ssh' ? 22000 : mode === 'sdb' ? 20000 : 12000;
+        startTimeout(timeoutMs);
         localStorage.setItem('lastConnectionMode', mode);
 
         if (mode === 'test') {
@@ -463,8 +469,14 @@ const TizenConnectionModal: React.FC<TizenConnectionModalProps> = memo(({
                                     <div className="space-y-3">
                                         <div className="flex justify-between items-end">
                                             <label className="text-[10px] font-bold text-slate-500 uppercase">Select Device</label>
-                                            <button onClick={() => socket?.emit('list_sdb_devices')} className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase">
-                                                <RefreshCw size={12} /> Rescan
+                                            <button
+                                                onClick={() => {
+                                                    setIsScanning(true);
+                                                    socket?.emit('list_sdb_devices', { sdbPath });
+                                                }}
+                                                className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 uppercase"
+                                            >
+                                                <RefreshCw size={12} className={isScanning ? 'animate-spin' : ''} /> Rescan
                                             </button>
                                         </div>
                                         <select

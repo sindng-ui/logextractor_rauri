@@ -1,6 +1,9 @@
 pub mod commands;
 
-use commands::{file_io, log_engine, log_reader, settings_cli, stream_engine, window_os};
+use commands::{
+    file_io, log_engine, log_reader, settings_cli, stream_engine, stream_sdb, stream_serial,
+    stream_ssh, window_os,
+};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tauri::{Manager, WindowEvent};
@@ -97,21 +100,6 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
-            // Determine workspace / app root to launch internal Socket.IO server
-            let app_root = if cfg!(debug_assertions) {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("."))
-            } else {
-                std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_else(|| PathBuf::from("."))
-            };
-
-            stream_engine::spawn_backend_server(&app_root);
-
             if let Some(main_win) = app.get_webview_window("main") {
                 if is_cli_mode {
                     let _ = main_win.hide();
@@ -134,9 +122,15 @@ pub fn run() {
                         if !is_cli_mode {
                             window_os::save_window_state(&handle_clone, &win_clone);
                         }
+                        stream_sdb::shutdown_sdb_session();
+                        stream_serial::shutdown_serial_session();
+                        stream_ssh::shutdown_ssh_session();
                         stream_engine::stop_backend_server();
                     }
                     WindowEvent::Destroyed => {
+                        stream_sdb::shutdown_sdb_session();
+                        stream_serial::shutdown_serial_session();
+                        stream_ssh::shutdown_ssh_session();
                         stream_engine::stop_backend_server();
                     }
                     _ => {}
@@ -184,6 +178,20 @@ pub fn run() {
             stream_engine::native_list_sdb_devices,
             stream_engine::native_start_scroll_stream,
             stream_engine::native_stop_scroll_stream,
+            stream_sdb::sdb_connect,
+            stream_sdb::sdb_write,
+            stream_sdb::sdb_clear,
+            stream_sdb::sdb_disconnect,
+            stream_sdb::sdb_connect_remote,
+            stream_serial::serial_connect,
+            stream_serial::serial_write,
+            stream_serial::serial_special_key,
+            stream_serial::serial_disconnect,
+            stream_ssh::ssh_connect,
+            stream_ssh::ssh_write,
+            stream_ssh::ssh_auth_response,
+            stream_ssh::ssh_clear,
+            stream_ssh::ssh_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running HappyTool Tauri application");
