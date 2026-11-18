@@ -9,6 +9,7 @@ import { workerRegistry } from '../../hooks/LogWorkerRegistry';
 vi.mock('../../utils/db', () => ({
     getStoredValue: vi.fn(),
     setStoredValue: vi.fn(),
+    deleteStoredValue: vi.fn(),
 }));
 
 // Mock Electron API

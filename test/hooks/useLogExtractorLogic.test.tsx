@@ -15,6 +15,7 @@ const { mockedAddToast } = vi.hoisted(() => ({ mockedAddToast: vi.fn() }));
 vi.mock('../../utils/db', () => ({
     getStoredValue: vi.fn().mockResolvedValue(null),
     setStoredValue: vi.fn(),
+    deleteStoredValue: vi.fn(),
 }));
 
 // Mock Toast Context

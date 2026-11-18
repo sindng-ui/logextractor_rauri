@@ -4,6 +4,14 @@ interface ElectronAPI {
     readFile: (path: string) => Promise<string>;
     getFileSize: (path: string) => Promise<number>;
     readFileSegment: (args: { path: string, start: number, end: number }) => Promise<Uint8Array>;
+    readFileSegmentsBatch?: (args: { path: string, ranges: [number, number][] }) => Promise<Uint8Array>;
+    indexLogFile?: (args: { path: string }) => Promise<Uint8Array>;
+    filterLogFile?: (args: {
+        path: string;
+        rule: any;
+        snapshotKey: string;
+        parentKey?: string | null;
+    }) => Promise<Uint8Array>;
     streamReadFile: (path: string, requestId: string, options?: { start?: number }) => Promise<{ status: string; requestId: string }>;
     cancelStream: (requestId: string) => Promise<{ status: string; requestId: string }>;
     onFileChunk: (callback: (data: { chunk: string; requestId: string }) => void) => () => void;
@@ -26,6 +34,7 @@ interface ElectronAPI {
     off?: (channel: 'loading-progress' | 'loading-log' | 'loading-complete', callback: (...args: any[]) => void) => void;
     // File Path Helper
     getFilePath?: (file: File) => string;
+    selectLogFile?: () => Promise<string | null>;
 
     // --- CLI IPC ---
     onCliCommand: (callback: (data: any) => void) => () => void;

@@ -1,6 +1,6 @@
 pub mod commands;
 
-use commands::{file_io, settings_cli, stream_engine, window_os};
+use commands::{file_io, log_engine, settings_cli, stream_engine, window_os};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use tauri::{Manager, WindowEvent};
@@ -149,12 +149,15 @@ pub fn run() {
             file_io::read_file,
             file_io::get_file_size,
             file_io::read_file_segment,
+            file_io::read_file_segments_batch,
             file_io::stream_read_file,
             file_io::cancel_stream,
             file_io::save_file,
             file_io::save_file_direct,
             file_io::append_file_direct,
             file_io::select_log_file,
+            log_engine::index_log_file,
+            log_engine::filter_log_file,
             window_os::copy_to_clipboard,
             window_os::open_external,
             window_os::get_app_path,

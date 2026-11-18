@@ -6,9 +6,17 @@ interface LogViewerEmptyStateProps {
     fileName?: string;
     onBrowse?: () => void;
     onPasteClipboard?: () => void;
+    pendingRestoreFileName?: string;
+    onRestorePendingFile?: () => void;
 }
 
-export const LogViewerEmptyState: React.FC<LogViewerEmptyStateProps> = ({ fileName, onBrowse, onPasteClipboard }) => {
+export const LogViewerEmptyState: React.FC<LogViewerEmptyStateProps> = ({
+    fileName,
+    onBrowse,
+    onPasteClipboard,
+    pendingRestoreFileName,
+    onRestorePendingFile,
+}) => {
     return (
         <div className="absolute inset-0 flex items-center justify-center text-slate-400 pointer-events-none">
             {fileName ? (
@@ -35,6 +43,18 @@ export const LogViewerEmptyState: React.FC<LogViewerEmptyStateProps> = ({ fileNa
                             or click to browse
                         </span>
                     </div>
+                    {pendingRestoreFileName && onRestorePendingFile && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onRestorePendingFile();
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-indigo-500/50 bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-200 text-xs font-semibold transition-all duration-200 shadow-lg active:scale-95"
+                        >
+                            <Lucide.RotateCcw size={14} className="text-indigo-300 shrink-0" />
+                            <span className="truncate max-w-[240px]">Reopen {pendingRestoreFileName}</span>
+                        </button>
+                    )}
                     {onPasteClipboard && (
                         <>
                             <div className="text-[10px] text-slate-600 font-bold my-1">— OR —</div>

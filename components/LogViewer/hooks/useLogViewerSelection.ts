@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { captureBrowserDropHandle } from '../../../utils/browserFilePersistence';
 
 interface UseLogViewerSelectionProps {
     onLineClick?: (index: number, isShift?: boolean, isCtrl?: boolean) => void;
@@ -26,7 +27,9 @@ export function useLogViewerSelection({
         e.stopPropagation();
         setDragActive(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0] && onDrop) {
-            onDrop(e.dataTransfer.files[0]);
+            const file = e.dataTransfer.files[0];
+            captureBrowserDropHandle(file, e.dataTransfer);
+            onDrop(file);
         }
     }, [onDrop]);
 

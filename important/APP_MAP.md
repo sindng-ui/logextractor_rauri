@@ -127,6 +127,9 @@
   - `Mount Cycle Safety`: 언마운트 시 로딩 경로 캐시 강제 초기화로 로딩 누락 원천 차단.
   - `Worker Persistence`: `LogWorkerRegistry`를 통해 탭 재마운트 시 즉각적인 UI 복구 및 재인덱싱 방지.
   - `Worker Idempotency`: 동일 파일에 대한 중복 로딩 요청 무시.
+  - `Tauri 네이티브 파일 경로 오픈 & 재실행 자동 복원 (useTauriFileDrop / selectLogFile)`: Tauri WebView2에서 `<input type="file">` 및 HTML5 Drop의 OS 경로 소실 문제를 해결하기 위해 `select_log_file` 네이티브 다이얼로그(`utils/tauriBridge.ts`), `tauri.conf.json` `dragDropEnabled: true` + `hooks/useTauriFileDrop.ts`(`getCurrentWebview().onDragDropEvent`)를 연동하고, 탭(`hooks/useTabPointerDrag.ts`)·퀵커맨드(`hooks/useCommandPointerReorder.ts`) 내부 재정렬을 Pointer Events로 분리해 충돌을 원천 차단함. `hooks/useLogFileOperations.ts` 및 `components/LogExtractor.tsx`에서 `openTabs` 즉시 동기 저장(`flushTabsToStorage`) + `beforeunload`/`pagehide` 영구 저장으로 종료/새로고침 후 재실행 시 마지막 열린 탭·로그·스크롤 위치가 자동 복원됨. [NEW][HOT]
+  - `Tauri 네이티브 Rust SWAR 인덱서 & 멀티스레드 BMH 필터 엔진 (log_engine.rs)`: 로컬 OS 파일 경로(`INIT_LOCAL_FILE_STREAM` + `hasNativeEngine`) 오픈 시 1GB 로그를 WebView/JS로 복사하지 않고 Rust 멀티스레드 SWAR `\n` 스캐너(`index_log_file`) 및 멀티코어 Rust BMH/UTF-8 필터 엔진(`filter_log_file`)에서 직접 스캔하고 매칭 라인 인덱스만 바이너리로 전송함. Rust 측 `FILTER_CACHE`가 직전 규칙 결과를 캐싱해 단어1 → 단어2 → 단어3 증분 필터링 시 캐시된 후보 오프셋만 밀리초 단위로 재검사해 초고속 성능을 유지함. [NEW][HOT]
+  - `브라우저 개발/웹 모드 새로고침(Ctrl+Shift+R) 파일 복원 (utils/browserFilePersistence.ts)`: `npm run dev` 등 비-Tauri 브라우저 환경에서는 IndexedDB(`browserHandle_${tabId}_${pane}`, `browserBlob_${tabId}_${pane}`)를 활용해 ≤250MB 파일은 무클릭 자동 복원, >250MB 대용량 파일은 권한 유지 시 자동 복원 / 초기화 시 `LogViewerEmptyState` 1클릭 `Reopen <filename>` 버튼을 제공함. [NEW][HOT]
   - `Notepad++ Tab Drop & Reload`: 이미 백그라운드 탭에 동일한 파일이 켜져 있다면, 해당 탭을 Active 탭으로 휙 포커싱하고 실시간 새로고침(Forced Reload)을 진행함. 빈 탭에 드롭 시에는 현재 탭에 덮어씌우며, 완전히 다른 파일 드롭 시 새 탭을 생성하고 활성화하여 풍성한 다중 탭 연동 UX를 제공함. [NEW][HOT]
 - **Transaction Analysis Fix (2026-04-10)**:
   - **Worker Regex Fix**: `workers/workerAnalysisHandlers.ts` — PID/TID extraction regex logic fixed to handle various log formats accurately. [NEW]
@@ -148,7 +151,7 @@
   - `Pane`: [LogViewerPane.tsx](./components/LogViewer/LogViewerPane.tsx)
   - `Renderer`: [HyperLogRenderer.tsx](./components/LogViewer/HyperLogRenderer.tsx)
   - `RawContextViewer`: 로그 라인 더블 클릭 시 원본 로그 문맥 오버레이. [NEW]
-  - `LogViewerEmptyState`: 빈 탭에 파일 드롭존과 함께 은은한 Glassmorphism 스타일의 **"Paste from Clipboard"** 프리미엄 버튼을 제공하여 클립보드 텍스트 로그의 즉시 로딩 실현. [NEW]
+  - `LogViewerEmptyState`: 빈 탭에 파일 드롭존과 함께 **"Paste from Clipboard"** 버튼 및 브라우저 새로고침 시 권한 재요청이 필요한 대용량 파일의 1클릭 **"Reopen \<filename\>"** 복원 버튼(`pendingRestoreFileName` / `onRestorePendingFile`)을 제공함. [UPDATED]
   - `EntityChipBar`: Raw View 헤더 아래에 렌더링되는 가로 스크롤 스마트 칩바. [NEW]
   - `logEntityDetector`: 타겟 로그 텍스트에서 PID, TID, Hex 주소를 정교하게 파싱하는 유틸리티. [NEW]
 - **Interactions**:
@@ -405,7 +408,8 @@
 - **Keywords**: [`tauri`, `rust`, `read_file_segment`, `tauri::ipc::Response`, `window_os`, `settings_cli`, `stream_engine`]
 - **Location**:
   - `Entry`: [src-tauri/src/main.rs](../src-tauri/src/main.rs), [src-tauri/src/lib.rs](../src-tauri/src/lib.rs)
-  - `File I/O`: [src-tauri/src/commands/file_io.rs](../src-tauri/src/commands/file_io.rs) (`read_file_segment` 15s File Handle Pooling + Raw Binary `tauri::ipc::Response`, `get_file_size`, `read_file`, `stream_read_file`, `save_file`, `save_file_direct`, `append_file_direct`)
+  - `File I/O`: [src-tauri/src/commands/file_io.rs](../src-tauri/src/commands/file_io.rs) (`Vec<PooledFile>` Lock-free 다중 핸들 풀링 `read_segment_bytes` / `read_file_segments_batch` / `read_file_segment` + Raw Binary `tauri::ipc::Response`, `select_log_file`, `get_file_size`, `read_file`, `stream_read_file`, `save_file`, `save_file_direct`, `append_file_direct`)
+  - `Native Log Engine`: [src-tauri/src/commands/log_engine.rs](../src-tauri/src/commands/log_engine.rs) (SWAR 8-byte 멀티스레드 개행 인덱서 `index_log_file` + 멀티코어 필터 및 증분 후보 캐시 `filter_log_file`), [src-tauri/src/commands/log_matcher.rs](../src-tauri/src/commands/log_matcher.rs) (`CompiledRule` BMH/UTF-8/ANSI-aware 매처) [NEW]
   - `Window & OS`: [src-tauri/src/commands/window_os.rs](../src-tauri/src/commands/window_os.rs) (`window-state.json` persistence, `set_zoom_factor`, `toggle_fullscreen`, `copy_to_clipboard`, `open_external`, `get_app_path`, `window_minimize`, `window_toggle_maximize`, `window_close`)
   - `Settings & CLI`: [src-tauri/src/commands/settings_cli.rs](../src-tauri/src/commands/settings_cli.rs) (`get_startup_status`, `splash_ready`, `save_settings_file`, `get_cli_settings`, `run_sdb_command`, `cli_ready`, `cli_stdout`, `cli_stderr`, `cli_exit`)
   - `Stream Engine`: [src-tauri/src/commands/stream_engine.rs](../src-tauri/src/commands/stream_engine.rs) (`spawn_backend_server`, `stop_backend_server`, `native_list_serial_ports`, `native_list_sdb_devices`, `native_start_scroll_stream`, `native_stop_scroll_stream`)
@@ -414,6 +418,7 @@
 - **ID**: `tauri-frontend-bridge`
 - **Keywords**: [`tauriBridge`, `electronAPI`, `tauriSocket`, `WindowTitleBarControls`, `title-drag`]
 - **Location**:
-  - `Bridge`: [utils/tauriBridge.ts](../utils/tauriBridge.ts) (`initTauriBridge`, `createTauriElectronAPI`, `registerTauriFilePath`, synchronous `getZoomFactor`, `.title-drag` delegation)
+  - `Bridge`: [utils/tauriBridge.ts](../utils/tauriBridge.ts) (`initTauriBridge`, `createTauriElectronAPI`, `selectLogFile`, `indexLogFile`, `filterLogFile`, `readFileSegmentsBatch`, `registerTauriFilePath`, synchronous `getZoomFactor`, `.title-drag` delegation), [hooks/useLogWorkerEvents.ts](../hooks/useLogWorkerEvents.ts) (Zero-copy Transferable 핸들러)
+  - `File Drop & Persistence`: [hooks/useTauriFileDrop.ts](../hooks/useTauriFileDrop.ts) (`getCurrentWebview().onDragDropEvent` OS 경로 및 Left/Right 패인 히트테스트), [hooks/useTabPointerDrag.ts](../hooks/useTabPointerDrag.ts), [hooks/useCommandPointerReorder.ts](../hooks/useCommandPointerReorder.ts), [utils/browserFilePersistence.ts](../utils/browserFilePersistence.ts) [NEW]
   - `Socket Adapter`: [utils/tauriSocket.ts](../utils/tauriSocket.ts) (`createLogStreamSocket`, `HybridTauriSocket`)
   - `TitleBar Controls`: [components/WindowTitleBarControls.tsx](../components/WindowTitleBarControls.tsx) (Top-right `138x32px` frameless window caption controls)

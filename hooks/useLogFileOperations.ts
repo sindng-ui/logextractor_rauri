@@ -1,13 +1,23 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { getStoredValue, setStoredValue } from '../utils/db';
 import { LogViewerHandle } from '../components/LogViewer/LogViewerPane';
 import { Socket } from 'socket.io-client';
 import { workerRegistry } from './LogWorkerRegistry';
+import { isTauriEnvironment } from '../utils/tauriBridge';
+import { TAURI_DROP_RIGHT_EVENT } from './useTauriFileDrop';
+import {
+    persistBrowserFileForReload,
+    pickBrowserFileWithHandle,
+    requestAndOpenPendingHandle,
+    restoreBrowserFile,
+} from '../utils/browserFilePersistence';
 
 export interface UseLogFileOperationsProps {
     tabId: string;
     initialFilePath?: string;
+    fileOpenToken?: number;
     initialFile?: File | null;
+    isActive?: boolean;
     onFileChange?: (path: string) => void;
     leftWorkerRef: React.MutableRefObject<Worker | null>;
     rightWorkerRef: React.MutableRefObject<Worker | null>;
@@ -44,11 +54,13 @@ export interface UseLogFileOperationsProps {
     isDualView: boolean; // ✅ Added
     setIsDualView: (val: boolean) => void; // ✅ Added
     onOpenFile?: (file: File) => void; // 🎯 전역 파일 오픈 위임
+    onOpenFilePath?: (filePath: string) => void;
+    addToast?: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void;
 }
 
 export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
     const {
-        tabId, initialFilePath, initialFile, onFileChange,
+        tabId, initialFilePath, fileOpenToken, initialFile, isActive = true, onFileChange,
         leftWorkerRef, rightWorkerRef, leftViewerRef, rightViewerRef, tizenSocket,
         activeStreamRequestIdLeft, activeStreamRequestIdRight, pendingScrollTop,
         setLeftFileName, setLeftFilePath, setLeftWorkerReady, setLeftIndexingProgress,
@@ -58,7 +70,7 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
         setRightTotalLines, setRightFilteredCount, setRightBookmarks, lastFilterHashRight,
         leftFilePath, rightFilePath, activeLineIndexLeft,
         isDualView, setIsDualView,
-        onOpenFile
+        onOpenFile, onOpenFilePath, addToast
     } = props;
 
     // Use a ref to track staleness (similar to original code's isStale)
@@ -66,6 +78,17 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
     const lastLoadingPathRefLeft = useRef<string | null>(null);
     const lastLoadingPathRefRight = useRef<string | null>(null);
     const isLoadedRef = useRef(false); // ✅ Prevent persistence before loadState completes
+    const leftFilePathRef = useRef(leftFilePath);
+    const rightFilePathRef = useRef(rightFilePath);
+    const isDualViewRef = useRef(isDualView);
+    const activeLineLeftRef = useRef(activeLineIndexLeft);
+    leftFilePathRef.current = leftFilePath;
+    rightFilePathRef.current = rightFilePath;
+    isDualViewRef.current = isDualView;
+    activeLineLeftRef.current = activeLineIndexLeft;
+
+    const [pendingRestoreLeft, setPendingRestoreLeft] = useState<{ fileName: string; handle: FileSystemFileHandle } | null>(null);
+    const [pendingRestoreRight, setPendingRestoreRight] = useState<{ fileName: string; handle: FileSystemFileHandle } | null>(null);
 
     useEffect(() => {
         isComponentStale.current = false;
@@ -113,7 +136,11 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
         };
     }, [leftWorkerRef, rightWorkerRef]); // Need refs in deps or handle dynamically
 
-    const loadFile = useCallback(async (targetPath: string, pane: 'left' | 'right' = 'left') => {
+    const loadFile = useCallback(async (
+        targetPath: string,
+        pane: 'left' | 'right' = 'left',
+        options?: { persist?: boolean; force?: boolean }
+    ) => {
         if (window.electronAPI) {
             const lastLoadingPathRef = pane === 'left' ? lastLoadingPathRefLeft : lastLoadingPathRefRight;
             const workerRef = pane === 'left' ? leftWorkerRef : rightWorkerRef;
@@ -125,6 +152,10 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
             const setFilteredCount = pane === 'left' ? setLeftFilteredCount : setRightFilteredCount;
             const lastFilterHash = pane === 'left' ? lastFilterHashLeft : lastFilterHashRight;
 
+            if (options?.force) {
+                lastLoadingPathRef.current = null;
+            }
+
             // 중복 로딩 방지 (동일 파일이 이미 로딩 중인 경우 무시)
             if (lastLoadingPathRef.current === targetPath && !tizenSocket) {
                 console.log(`[useLog-${pane}] Skip redundant loadFile for:`, targetPath);
@@ -133,12 +164,28 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
             lastLoadingPathRef.current = targetPath;
 
             const fileName = targetPath.split(/[/\\]/).pop() || 'log_file.log';
+            if (pane === 'left') setPendingRestoreLeft(null);
+            else setPendingRestoreRight(null);
+
             setFileName(fileName);
             setFilePath(targetPath);
             workerRegistry.updateState(tabId, pane, { path: targetPath });
 
             if (pane === 'left' && onFileChange) {
                 onFileChange(targetPath);
+            }
+
+            if (options?.persist !== false) {
+                isLoadedRef.current = true;
+                const statePayload = JSON.stringify({
+                    filePath: pane === 'left' ? targetPath : leftFilePathRef.current,
+                    rightFilePath: pane === 'right' ? targetPath : rightFilePathRef.current,
+                    isDualView: isDualViewRef.current,
+                    selectedLine: pane === 'left' ? -1 : activeLineLeftRef.current,
+                    scrollTop: pane === 'left' ? 0 : (leftViewerRef.current?.getScrollTop() || 0),
+                });
+                lastSavedState.current = statePayload;
+                setStoredValue(`tabState_${tabId}`, statePayload);
             }
 
             setWorkerReady(false);
@@ -148,14 +195,21 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
             // 필터 캐시 강제 무효화를 위해 해시 리셋
             lastFilterHash.current = '';
 
-            // ✅ OOM-Safe Local File Loading Route! (2GB+ Support)
+            // ✅ OOM-Safe Local File Loading Route + Native Rust Engine!
             if (window.electronAPI.getFileSize) {
                 try {
                     const size = await window.electronAPI.getFileSize(targetPath);
+                    if (isComponentStale.current) return;
                     console.log(`[useLog-${pane}] Initiating LOCAL_FILE_STREAM for ${fileName}, size: ${Math.round(size / 1024 / 1024)}MB`);
                     workerRef.current?.postMessage({
                         type: 'INIT_LOCAL_FILE_STREAM',
-                        payload: { path: targetPath, size }
+                        payload: {
+                            path: targetPath,
+                            size,
+                            hasNativeEngine: Boolean(
+                                window.electronAPI.indexLogFile && window.electronAPI.filterLogFile
+                            ),
+                        }
                     });
                     return; // 🚀 Use the new efficient route instead of string buffers!
                 } catch (e) {
@@ -176,6 +230,12 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
                         const file = new File([content], fileName);
                         (file as any).path = targetPath;
                         workerRef.current?.postMessage({ type: 'INIT_FILE', payload: file });
+                    }).catch((readErr) => {
+                        console.error(`[useLog-${pane}] Failed to restore file:`, targetPath, readErr);
+                        if (!isComponentStale.current) {
+                            setWorkerReady(true);
+                            addToast?.(`파일을 다시 열 수 없습니다: ${fileName}`, 'warning');
+                        }
                     });
                 });
             } else {
@@ -188,16 +248,42 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
                     const file = new File([content], fileName);
                     (file as any).path = targetPath;
                     workerRef.current?.postMessage({ type: 'INIT_FILE', payload: file });
+                }).catch((readErr) => {
+                    console.error(`[useLog-${pane}] Failed to load file:`, targetPath, readErr);
+                    if (!isComponentStale.current) {
+                        setWorkerReady(true);
+                        addToast?.(`파일을 다시 열 수 없습니다: ${fileName}`, 'warning');
+                    }
                 });
             }
         }
-    }, [onFileChange, tizenSocket]);
+    }, [tabId, onFileChange, tizenSocket, addToast]);
+
+    const initWorkerFromBrowserFile = useCallback((pane: 'left' | 'right', file: File) => {
+        const isLeft = pane === 'left';
+        const setFileName = isLeft ? setLeftFileName : setRightFileName;
+        const setWorkerReady = isLeft ? setLeftWorkerReady : setRightWorkerReady;
+        const setProgress = isLeft ? setLeftIndexingProgress : setRightIndexingProgress;
+        const setTotal = isLeft ? setLeftTotalLines : setRightTotalLines;
+        const setCount = isLeft ? setLeftFilteredCount : setRightFilteredCount;
+        const workerRef = isLeft ? leftWorkerRef : rightWorkerRef;
+        const lastHashRef = isLeft ? lastFilterHashLeft : lastFilterHashRight;
+
+        setFileName(file.name);
+        setWorkerReady(false);
+        setProgress(0);
+        setTotal(0);
+        setCount(0);
+        lastHashRef.current = '';
+        workerRef.current?.postMessage({ type: 'INIT_FILE', payload: file });
+    }, []);
 
     const loadState = useCallback(async () => {
         // Priority 1: Direct File Object
         if (initialFile) {
             console.log('[useLog] Loading from initialFile object:', initialFile.name);
-            const path = (initialFile as any).path || '';
+            const path = window.electronAPI?.getFilePath?.(initialFile) || (initialFile as any).path || '';
+            setPendingRestoreLeft(null);
             setLeftFileName(initialFile.name);
             setLeftFilePath(path);
             setLeftWorkerReady(false);
@@ -205,6 +291,20 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
             setLeftTotalLines(0);
             setLeftFilteredCount(0);
             workerRegistry.updateState(tabId, 'left', { path });
+            if (path) {
+                const statePayload = JSON.stringify({
+                    filePath: path,
+                    rightFilePath: rightFilePathRef.current,
+                    isDualView: isDualViewRef.current,
+                    selectedLine: -1,
+                    scrollTop: 0,
+                });
+                lastSavedState.current = statePayload;
+                setStoredValue(`tabState_${tabId}`, statePayload);
+            } else {
+                persistBrowserFileForReload(tabId, 'left', initialFile);
+            }
+            isLoadedRef.current = true;
             leftWorkerRef.current?.postMessage({ type: 'INIT_FILE', payload: initialFile });
             return;
         }
@@ -243,15 +343,35 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
         }
 
         if (leftTargetPath) {
-            loadFile(leftTargetPath, 'left');
+            loadFile(leftTargetPath, 'left', { persist: false });
+        } else if (!isTauriEnvironment()) {
+            const restoredLeft = await restoreBrowserFile(tabId, 'left');
+            if (isComponentStale.current) return;
+            if (restoredLeft.file) {
+                setPendingRestoreLeft(null);
+                initWorkerFromBrowserFile('left', restoredLeft.file);
+            } else if (restoredLeft.pendingHandle) {
+                setPendingRestoreLeft(restoredLeft.pendingHandle);
+            }
         }
 
-        if (savedIsDualView && rightTargetPath) {
-            loadFile(rightTargetPath, 'right');
+        if (savedIsDualView) {
+            if (rightTargetPath) {
+                loadFile(rightTargetPath, 'right', { persist: false });
+            } else if (!isTauriEnvironment()) {
+                const restoredRight = await restoreBrowserFile(tabId, 'right');
+                if (isComponentStale.current) return;
+                if (restoredRight.file) {
+                    setPendingRestoreRight(null);
+                    initWorkerFromBrowserFile('right', restoredRight.file);
+                } else if (restoredRight.pendingHandle) {
+                    setPendingRestoreRight(restoredRight.pendingHandle);
+                }
+            }
         }
 
         isLoadedRef.current = true; // ✅ Mark loaded to allow persistence
-    }, [tabId, initialFile, initialFilePath, loadFile, setIsDualView]);
+    }, [tabId, initialFile, initialFilePath, loadFile, setIsDualView, initWorkerFromBrowserFile]);
 
     const handleLeftFileChange = useCallback((file: File) => {
         // 🎯 [Notepad++ 전역 위임] onOpenFile 허브가 활성화되어 있으면 전권을 전역 위임 처리합니다.
@@ -286,6 +406,11 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
                 scrollTop: 0
             }));
             if (onFileChange) onFileChange(path);
+        }
+
+        setPendingRestoreLeft(null);
+        if (!path) {
+            persistBrowserFileForReload(tabId, 'left', file);
         }
 
         setLeftFileName(file.name);
@@ -326,6 +451,11 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
                 selectedLine: activeLineIndexLeft,
                 scrollTop: leftViewerRef.current?.getScrollTop() || 0
             }));
+        }
+
+        setPendingRestoreRight(null);
+        if (!path) {
+            persistBrowserFileForReload(tabId, 'right', file);
         }
 
         setRightFileName(file.name);
@@ -388,6 +518,10 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
             
             // 캐시 무효화로 재로딩 보장
             lastLoadingPathRefLeft.current = null;
+            setPendingRestoreLeft(null);
+            if (!path) {
+                persistBrowserFileForReload(tabId, 'left', initialFile);
+            }
             workerRegistry.updateState(tabId, 'left', { path });
             leftWorkerRef.current?.postMessage({ type: 'INIT_FILE', payload: initialFile });
         } else if (!initialFile) {
@@ -395,10 +529,91 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
         }
     }, [initialFile]);
 
+    const prevOpenKeyRef = useRef<string>(`${initialFilePath || ''}::${fileOpenToken || 0}`);
+
+    useEffect(() => {
+        const nextKey = `${initialFilePath || ''}::${fileOpenToken || 0}`;
+        if (nextKey === prevOpenKeyRef.current) return;
+        prevOpenKeyRef.current = nextKey;
+
+        if (initialFilePath) {
+            loadFile(initialFilePath, 'left', { persist: true, force: true });
+        }
+    }, [initialFilePath, fileOpenToken, loadFile]);
+
+    useEffect(() => {
+        const handleRightDrop = (e: Event) => {
+            if (!isActive) return;
+            const customEvent = e as CustomEvent<{ path?: string }>;
+            const droppedPath = customEvent.detail?.path;
+            if (!droppedPath) return;
+            loadFile(droppedPath, 'right', { persist: true, force: true });
+        };
+
+        window.addEventListener(TAURI_DROP_RIGHT_EVENT, handleRightDrop);
+        return () => window.removeEventListener(TAURI_DROP_RIGHT_EVENT, handleRightDrop);
+    }, [isActive, loadFile]);
+
+    const handleBrowseNative = useCallback(async (pane: 'left' | 'right'): Promise<boolean> => {
+        if (isTauriEnvironment() && window.electronAPI?.selectLogFile) {
+            try {
+                const selectedPath = await window.electronAPI.selectLogFile();
+                if (!selectedPath) return true; // Native dialog shown & cancelled cleanly
+                if (pane === 'left' && onOpenFilePath) {
+                    onOpenFilePath(selectedPath);
+                } else {
+                    await loadFile(selectedPath, pane, { persist: true, force: true });
+                }
+                return true;
+            } catch (err) {
+                console.warn('[useLogFileOperations] Native selectLogFile failed, falling back:', err);
+                return false;
+            }
+        }
+
+        if (!isTauriEnvironment()) {
+            const { file, cancelled } = await pickBrowserFileWithHandle();
+            if (cancelled) return true;
+            if (file) {
+                if (pane === 'left') handleLeftFileChange(file);
+                else handleRightFileChange(file);
+                return true;
+            }
+        }
+
+        return false;
+    }, [onOpenFilePath, loadFile, handleLeftFileChange, handleRightFileChange]);
+
+    const handleRestorePendingFile = useCallback(async (pane: 'left' | 'right') => {
+        const pending = pane === 'left' ? pendingRestoreLeft : pendingRestoreRight;
+        if (!pending) return;
+
+        try {
+            const file = await requestAndOpenPendingHandle(tabId, pane, pending.handle);
+            if (!file) {
+                addToast?.('브라우저 파일 읽기 권한이 거부되었습니다.', 'warning');
+                return;
+            }
+            if (pane === 'left') {
+                setPendingRestoreLeft(null);
+            } else {
+                setPendingRestoreRight(null);
+            }
+            initWorkerFromBrowserFile(pane, file);
+        } catch (err) {
+            console.error('[useLogFileOperations] Failed to reopen handle:', err);
+            addToast?.('이전 파일을 다시 열 수 없습니다.', 'warning');
+        }
+    }, [tabId, pendingRestoreLeft, pendingRestoreRight, initWorkerFromBrowserFile, addToast]);
+
     return {
         loadState,
         loadFile,
         handleLeftFileChange,
-        handleRightFileChange
+        handleRightFileChange,
+        handleBrowseNative,
+        pendingRestoreLeft,
+        pendingRestoreRight,
+        handleRestorePendingFile,
     };
 };

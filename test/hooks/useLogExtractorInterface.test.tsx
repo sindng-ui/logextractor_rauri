@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../../utils/db', () => ({
     getStoredValue: vi.fn().mockResolvedValue(null),
     setStoredValue: vi.fn(),
+    deleteStoredValue: vi.fn(),
 }));
 
 vi.mock('../../contexts/ToastContext', () => ({

@@ -60,35 +60,47 @@ export function useLogWorkerEvents() {
         // 2. 공통 이벤트 처리 (switch-case)
         switch (type) {
             case 'RPC_REQUEST': {
-                if (payload?.method === 'readFileSegment') {
-                    const { path, start, end } = payload.args;
-                    console.log(`[useLog-${pane}] Handling RPC_REQUEST: readFileSegment`, { path, start, end });
-                    if (!window.electronAPI?.readFileSegment) {
-                        console.error(`[useLog-${pane}] window.electronAPI.readFileSegment is missing!`);
+                const method = payload?.method as
+                    | 'readFileSegment'
+                    | 'readFileSegmentsBatch'
+                    | 'indexLogFile'
+                    | 'filterLogFile'
+                    | undefined;
+                if (
+                    method === 'readFileSegment' ||
+                    method === 'readFileSegmentsBatch' ||
+                    method === 'indexLogFile' ||
+                    method === 'filterLogFile'
+                ) {
+                    const apiFn = window.electronAPI?.[method];
+                    if (!apiFn) {
+                        console.error(`[useLog-${pane}] window.electronAPI.${method} is missing!`);
                         workerRef.current?.postMessage({
                             type: 'RPC_ERROR',
                             requestId,
-                            payload: 'electronAPI.readFileSegment is missing'
+                            payload: `electronAPI.${method} is missing`
                         });
                         return;
                     }
-                    window.electronAPI.readFileSegment({ path, start, end })
+                    (apiFn as (args: any) => Promise<Uint8Array>)(payload.args)
                         .then(chunkBuffer => {
-                            // Ensure we have a clean ArrayBuffer for transfer
-                            const finalBuffer = new Uint8Array(chunkBuffer);
-                            console.log(`[useLog-${pane}] RPC_RESPONSE success, length:`, finalBuffer.length);
+                            const isStandaloneBuffer =
+                                chunkBuffer.byteOffset === 0 &&
+                                chunkBuffer.byteLength === chunkBuffer.buffer.byteLength &&
+                                !(typeof SharedArrayBuffer !== 'undefined' && chunkBuffer.buffer instanceof SharedArrayBuffer);
+                            const finalBuffer = isStandaloneBuffer ? chunkBuffer : new Uint8Array(chunkBuffer);
                             workerRef.current?.postMessage({
                                 type: 'RPC_RESPONSE',
                                 requestId,
                                 payload: finalBuffer
-                            }, [finalBuffer.buffer]); // 제로 카피 버퍼 트랜스퍼 🚀
+                            }, [finalBuffer.buffer]);
                         })
                         .catch(err => {
                             console.error(`[useLog-${pane}] RPC_RESPONSE error:`, err);
                             workerRef.current?.postMessage({
                                 type: 'RPC_ERROR',
                                 requestId,
-                                payload: err?.message || 'Read failed'
+                                payload: err?.message || `${method} failed`
                             });
                         });
                 }

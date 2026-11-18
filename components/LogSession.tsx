@@ -90,7 +90,7 @@ const LogSession: React.FC<LogSessionProps> = ({
         appliedConfig,
 
         leftViewerRef, leftWorkerReady, leftFilteredCount, requestLeftLines, setActiveLineIndexLeft,
-        handleLineDoubleClickAction, activeLineIndexLeft, selectedIndicesLeft, setSelectedIndicesLeft, handleLeftFileChange, handleLeftReset, leftIndexingProgress, handlePasteClipboard,
+        handleLineDoubleClickAction, activeLineIndexLeft, selectedIndicesLeft, setSelectedIndicesLeft, handleLeftFileChange, handleBrowseNative, pendingRestoreLeft, pendingRestoreRight, handleRestorePendingFile, handleLeftReset, leftIndexingProgress, handlePasteClipboard,
 
         rightViewerRef, rightWorkerReady, rightFilteredCount, requestRightLines, setActiveLineIndexRight,
         activeLineIndexRight, selectedIndicesRight, setSelectedIndicesRight, handleRightFileChange, handleRightReset, rightIndexingProgress,
@@ -674,7 +674,10 @@ const LogSession: React.FC<LogSessionProps> = ({
     // Memoized handlers for Left Pane
     const onLineClickLeft = React.useCallback((index: number, isShift?: boolean, isCtrl?: boolean) => handleLineClick('left', index, !!isShift, !!isCtrl), [handleLineClick]);
     const onLineDoubleClickLeft = React.useCallback((index: number) => handleLineDoubleClickAction(index, 'left'), [handleLineDoubleClickAction]);
-    const onBrowseLeft = React.useCallback(() => leftFileInputRef.current?.click(), []);
+    const onBrowseLeft = React.useCallback(async () => {
+        if (handleBrowseNative && await handleBrowseNative('left')) return;
+        leftFileInputRef.current?.click();
+    }, [handleBrowseNative]);
     const onCopyLeft = React.useCallback((ignoreSelection?: boolean) => handleCopyLogs('left', ignoreSelection), [handleCopyLogs]);
     const onCopyAsConfluenceTableLeft = React.useCallback(() => handleCopyAsConfluenceTable('left', true), [handleCopyAsConfluenceTable]);
     const onSaveLeft = React.useCallback((ignoreSelection?: boolean) => handleSaveLogs('left', ignoreSelection), [handleSaveLogs]);
@@ -789,7 +792,10 @@ const LogSession: React.FC<LogSessionProps> = ({
     // Memoized handlers for Right Pane
     const onLineClickRight = React.useCallback((index: number, isShift?: boolean, isCtrl?: boolean) => handleLineClick('right', index, !!isShift, !!isCtrl), [handleLineClick]);
     const onLineDoubleClickRight = React.useCallback((index: number) => handleLineDoubleClickAction(index, 'right'), [handleLineDoubleClickAction]);
-    const onBrowseRight = React.useCallback(() => rightFileInputRef.current?.click(), []);
+    const onBrowseRight = React.useCallback(async () => {
+        if (handleBrowseNative && await handleBrowseNative('right')) return;
+        rightFileInputRef.current?.click();
+    }, [handleBrowseNative]);
     const onCopyRight = React.useCallback((ignoreSelection?: boolean) => handleCopyLogs('right', ignoreSelection), [handleCopyLogs]);
     const onCopyAsConfluenceTableRight = React.useCallback(() => handleCopyAsConfluenceTable('right', true), [handleCopyAsConfluenceTable]);
     const onSaveRight = React.useCallback((ignoreSelection?: boolean) => handleSaveLogs('right', ignoreSelection), [handleSaveLogs]);
@@ -1351,6 +1357,7 @@ const LogSession: React.FC<LogSessionProps> = ({
                             {/* Left Pane */}
                             <div
                                 className={`flex flex-col h-full min-w-0 relative transition-[width] duration-500 ease-[cubic-bezier(0.19,1,0.22,1)] will-change-[width] ${isDualView ? '' : 'w-full'}`}
+                                data-pane-id="left"
                                 style={{ width: isDualView ? `${splitRatio * 100}%` : undefined }}
                             >
                                 <LoadingOverlay
@@ -1378,6 +1385,8 @@ const LogSession: React.FC<LogSessionProps> = ({
                                     selectedIndices={selectedIndicesLeft}
                                     onDrop={handleLeftFileChange}
                                     onBrowse={onBrowseLeft}
+                                    pendingRestoreFileName={pendingRestoreLeft?.fileName}
+                                    onRestorePendingFile={() => handleRestorePendingFile?.('left')}
                                     onPasteClipboard={() => handlePasteClipboard('left')}
                                     paneId="left"
                                     fileName={leftFileName || undefined}
@@ -1489,6 +1498,8 @@ const LogSession: React.FC<LogSessionProps> = ({
                                         selectedIndices={selectedIndicesRight}
                                         onDrop={handleRightFileChange}
                                         onBrowse={onBrowseRight}
+                                        pendingRestoreFileName={pendingRestoreRight?.fileName}
+                                        onRestorePendingFile={() => handleRestorePendingFile?.('right')}
                                         onPasteClipboard={() => handlePasteClipboard('right')}
                                         paneId="right"
                                         fileName={rightFileName || undefined}

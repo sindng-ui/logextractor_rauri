@@ -112,6 +112,15 @@ function setupTitleBarDragDelegation(): void {
     });
 }
 
+function toUint8Array(raw: ArrayBuffer | Uint8Array | number[]): Uint8Array {
+    if (raw instanceof Uint8Array) return raw;
+    if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
+    if (ArrayBuffer.isView(raw)) {
+        return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    }
+    return new Uint8Array(raw as number[]);
+}
+
 export function createTauriElectronAPI() {
     // Load initial zoom from saved settings if present
     try {
@@ -150,12 +159,48 @@ export function createTauriElectronAPI() {
                 start,
                 end,
             });
-            if (raw instanceof Uint8Array) return raw;
-            if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
-            if (ArrayBuffer.isView(raw)) {
-                return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-            }
-            return new Uint8Array(raw as number[]);
+            return toUint8Array(raw);
+        },
+
+        readFileSegmentsBatch: async ({
+            path,
+            ranges,
+        }: {
+            path: string;
+            ranges: [number, number][];
+        }): Promise<Uint8Array> => {
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+                'read_file_segments_batch',
+                { path, ranges }
+            );
+            return toUint8Array(raw);
+        },
+
+        indexLogFile: async ({ path }: { path: string }): Promise<Uint8Array> => {
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>('index_log_file', {
+                path,
+            });
+            return toUint8Array(raw);
+        },
+
+        filterLogFile: async ({
+            path,
+            rule,
+            snapshotKey,
+            parentKey,
+        }: {
+            path: string;
+            rule: any;
+            snapshotKey: string;
+            parentKey?: string | null;
+        }): Promise<Uint8Array> => {
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>('filter_log_file', {
+                path,
+                rule,
+                snapshotKey,
+                parentKey: parentKey ?? null,
+            });
+            return toUint8Array(raw);
         },
 
         streamReadFile: async (
@@ -311,6 +356,11 @@ export function createTauriElectronAPI() {
             const bySig = fileSignatureMap.get(getFileSignature(file));
             if (bySig) return bySig;
             return '';
+        },
+
+        selectLogFile: async (): Promise<string | null> => {
+            if (!isTauriEnvironment()) return null;
+            return await invoke<string | null>('select_log_file');
         },
 
         // --- CLI IPC ---

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder, useDragControls } from 'framer-motion';
 import { Plus, X, Edit2, Trash2, Zap, Terminal, Command, GripVertical, History, Search } from 'lucide-react';
 import { ConfirmDialog, PromptDialog } from '../../ui/CommonDialogs';
+import { useCommandPointerReorder } from '../../../hooks/useCommandPointerReorder';
 
 interface QuickCommand {
     id: string;
@@ -35,9 +36,8 @@ const DraggableCommandItem = ({
     handleDelete,
     renderTokensToHtml,
     draggedId,
-    onDragStart,
-    onDragEnter,
-    onDragEnd
+    onPointerDown,
+    consumeSuppressedClick
 }: {
     c: QuickCommand,
     handleExecute: (cmd: string) => void,
@@ -47,9 +47,8 @@ const DraggableCommandItem = ({
     handleDelete: (id: string, e: React.MouseEvent) => void,
     renderTokensToHtml: (cmd: string) => string,
     draggedId: string | null,
-    onDragStart: (id: string, e: React.DragEvent) => void,
-    onDragEnter: (id: string, e: React.DragEvent) => void,
-    onDragEnd: () => void
+    onPointerDown: (id: string, e: React.PointerEvent) => void,
+    consumeSuppressedClick: () => boolean
 }) => {
     // 🐧 이름 기반 해시로 일관된 색상 부여
     const hash = c.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -58,21 +57,9 @@ const DraggableCommandItem = ({
     return (
         <motion.div
             id={`cmd-${c.id}`}
+            data-cmd-id={c.id}
             layout
-            draggable
-            onDragStart={(e: any) => {
-                // HTML5 Drag UI 세팅
-                if (e.dataTransfer) {
-                    e.dataTransfer.effectAllowed = 'move';
-                }
-                onDragStart(c.id, e);
-            }}
-            onDragEnter={(e: any) => {
-                e.preventDefault();
-                onDragEnter(c.id, e);
-            }}
-            onDragOver={(e) => e.preventDefault()}
-            onDragEnd={onDragEnd}
+            onPointerDown={(e: React.PointerEvent) => onPointerDown(c.id, e)}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className={`group relative flex items-center gap-2.5 px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 ${accent.border} transition-colors duration-200 select-none cursor-pointer shadow-lg shadow-black/40 overflow-hidden ${draggedId === c.id ? 'opacity-40 scale-95 z-50' : 'opacity-100 z-0 hover:z-10'}`}
@@ -87,7 +74,10 @@ const DraggableCommandItem = ({
                 setHoveredCmd(null);
                 setHoverPos(null);
             }}
-            onClick={() => handleExecute(c.cmd)}
+            onClick={() => {
+                if (consumeSuppressedClick()) return;
+                handleExecute(c.cmd);
+            }}
         >
             <div className={`w-6 h-6 rounded-lg ${accent.bg} flex items-center justify-center shrink-0 transition-colors z-10`}>
                 <Zap size={12} className={accent.text} />
@@ -268,11 +258,19 @@ export const QuickCommandSection: React.FC<QuickCommandSectionProps> = ({ onExec
     } | null>(null);
     const [promptConfig, setPromptConfig] = useState<{ title: string, description: string, onConfirm: (val: string) => void, onCancel: () => void } | null>(null);
     const [recentCommands, setRecentCommands] = useState<string[]>([]);
-    const [draggedId, setDraggedId] = useState<string | null>(null);
-    const draggedIdRef = React.useRef<string | null>(null); // stale closure 방지용 ref
     const editorRef = React.useRef<HTMLDivElement>(null);
-    const lastSwapTime = React.useRef<number>(0);
-    const dragOffset = React.useRef({ x: 0, y: 0 });
+    const {
+        draggedId,
+        handleItemPointerDown,
+        consumeSuppressedClick,
+    } = useCommandPointerReorder(setCommands, searchQuery);
+
+    useEffect(() => {
+        if (draggedId) {
+            setHoveredCmd(null);
+            setHoverPos(null);
+        }
+    }, [draggedId]);
 
     const loadRecentCommands = () => {
         try {
@@ -298,52 +296,6 @@ export const QuickCommandSection: React.FC<QuickCommandSectionProps> = ({ onExec
         try {
             localStorage.setItem('quickCommands', JSON.stringify(updated));
         } catch (e) {}
-    };
-
-    // 🐧🎯 HTML5 Drag & Drop 순서 변경 (2D Flex Wrap 완벽 지원)
-    const handleDragStart = (id: string, e: React.DragEvent) => {
-        if (searchQuery.trim() !== '') return;
-        draggedIdRef.current = id; // ref 먼저 세팅 (즉시 반영)
-        setDraggedId(id);
-        setHoveredCmd(null);
-        setHoverPos(null);
-
-        const rect = e.currentTarget.getBoundingClientRect();
-        dragOffset.current = {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
-    };
-
-    // 🐧 onDragEnter 기반 정렬
-    // onDragEnter는 마우스가 카드 경계를 '진입'하는 순간 정확히 1회 발생 → 가장 신뢰할 수 있는 이벤트
-    // 쿨다운(150ms)으로 빠른 연속 swap 방지 (oscillation 차단)
-    const handleDragEnter = (targetId: string, _e: React.DragEvent) => {
-        const currentDraggedId = draggedIdRef.current;
-        if (!currentDraggedId || currentDraggedId === targetId) return;
-        if (searchQuery.trim() !== '') return;
-
-        const now = Date.now();
-        if (now - lastSwapTime.current < 150) return;
-
-        lastSwapTime.current = now;
-
-        setCommands(prev => {
-            const draggedIdx = prev.findIndex(c => c.id === currentDraggedId);
-            const targetIdx = prev.findIndex(c => c.id === targetId);
-            if (draggedIdx === -1 || targetIdx === -1) return prev;
-
-            const newCmds = [...prev];
-            const [draggedItem] = newCmds.splice(draggedIdx, 1);
-            newCmds.splice(targetIdx, 0, draggedItem);
-            return newCmds;
-        });
-    };
-
-    const handleDragEnd = () => {
-        draggedIdRef.current = null;
-        setDraggedId(null);
-        // 상태가 변경된 commands는 useEffect를 통해 localStorage에 자동 저장됨
     };
 
     const filteredCommands = React.useMemo(() => {
@@ -582,9 +534,8 @@ export const QuickCommandSection: React.FC<QuickCommandSectionProps> = ({ onExec
                                 handleDelete={handleDelete}
                                 renderTokensToHtml={renderTokensToHtml}
                                 draggedId={draggedId}
-                                onDragStart={handleDragStart}
-                                onDragEnter={handleDragEnter}
-                                onDragEnd={handleDragEnd}
+                                onPointerDown={handleItemPointerDown}
+                                consumeSuppressedClick={consumeSuppressedClick}
                             />
                         ))}
                     </div>

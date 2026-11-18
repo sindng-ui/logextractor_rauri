@@ -75,6 +75,8 @@ export interface LogViewerPaneProps {
     onSelectAll?: () => void;
 
     selectedRuleId?: string;
+    pendingRestoreFileName?: string;
+    onRestorePendingFile?: () => void;
 }
 
 export interface LogViewerHandle {
@@ -104,7 +106,9 @@ const LogViewerPane = React.memo(forwardRef<LogViewerHandle, LogViewerPaneProps>
         onViewRawRange, onCopyRawRange, dashboardHeight: propDashboardHeight, onDashboardHeightChange,
         clearCacheTick, sharedBuffers, onAnalyzeSpam, onHighlightJump, onReset, onQuickHighlight, onClearQuickHighlights,
         onSelectAll,
-        selectedRuleId
+        selectedRuleId,
+        pendingRestoreFileName,
+        onRestorePendingFile
     } = props;
 
     const rowHeight = preferences?.rowHeight || DEFAULT_ROW_HEIGHT;
@@ -367,7 +371,13 @@ const LogViewerPane = React.memo(forwardRef<LogViewerHandle, LogViewerPaneProps>
                         </div>
                     </>
                 ) : (
-                    <LogViewerEmptyState fileName={fileName} onBrowse={onBrowse} onPasteClipboard={onPasteClipboard} />
+                    <LogViewerEmptyState
+                        fileName={fileName}
+                        onBrowse={onBrowse}
+                        onPasteClipboard={onPasteClipboard}
+                        pendingRestoreFileName={pendingRestoreFileName}
+                        onRestorePendingFile={onRestorePendingFile}
+                    />
                 )}
             </div>
 

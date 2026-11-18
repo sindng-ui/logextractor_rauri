@@ -75,6 +75,7 @@ let isLiveStream = false;
 let isLocalFileMode = false;
 let localFilePath: string | null = null;
 let localFileSize: number = 0;
+let hasNativeEngine = false;
 
 // --- Shared Buffer Initialization ---
 const LOG_SAB_SIZE = 100 * 1024 * 1024; // 100MB Shared Log Store
@@ -258,7 +259,6 @@ const rpcCall = (method: string, args: any): Promise<any> => {
     return new Promise((resolve, reject) => {
         const requestId = `rpc-${Date.now()}-${_rpcCallIndex++}`;
         rpcWaiters.set(requestId, { resolve, reject });
-        console.log(`[Worker] Initiating RPC_REQUEST: ${method}`, args);
         respond({ type: 'RPC_REQUEST', requestId, payload: { method, args } } as any);
     });
 };
@@ -270,6 +270,7 @@ const buildFileIndex = async (file: File) => {
     isLocalFileMode = false;
     localFilePath = null;
     localFileSize = 0;
+    hasNativeEngine = false;
     isLiveStream = false;
     currentFile = file;
     // streamLines = []; // Clear stream data - REMOVED
@@ -356,67 +357,91 @@ const buildFileIndex = async (file: File) => {
     isBuildingTimestampCache = false;
 };
 
-// --- Handler: Local File Indexing (RPC 2GB+ OOM Free) ---
-const buildLocalFileIndex = async (path: string, size: number) => {
+// --- Handler: Local File Indexing (Native Rust SWAR or RPC 2GB+ OOM Free) ---
+const buildLocalFileIndex = async (path: string, size: number, useNativeEngine = false) => {
     isStreamMode = false;
     isLiveStream = false;
     isLocalFileMode = true;
     localFilePath = path;
     localFileSize = size;
+    hasNativeEngine = useNativeEngine;
     currentFile = null;
     BookmarkManager.clearAll();
     isCalculatingHeatmap = false;
     currentFilterRequestId++;
     filterCache.clear();
 
-    initSubWorkers(); // ✅ Spawn to proceed with WASM initialization in parallel (WASM Cold Start optimization)
-
     respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress: 0 } });
 
-    // Memory efficient indexing
-    let capacity = 5 * 1024 * 1024; // Start with 5M lines
-    let tempOffsets = new BigInt64Array(capacity);
-    tempOffsets[0] = 0n;
     let lineCount = 1;
+    let indexedNatively = false;
 
-    let offset = 0n;
-    let processedBytes = 0;
-    // 💡 50MB Chunks: Reduces IPC round-trip count from 290 to 29, minimizing contention during multi-tab use 🐧🚀
-    const chunkSize = 50 * 1024 * 1024;
-
-    try {
-        console.log(`[Worker] Starting Local File Indexing: ${path} (${Math.round(size / 1024 / 1024)}MB, chunkSize=50MB)`);
-        while (processedBytes < size) {
-            const end = Math.min(processedBytes + chunkSize, size);
-            const chunk: Uint8Array = await rpcCall('readFileSegment', { path, start: processedBytes, end });
-
-            let pos = -1;
-            while ((pos = chunk.indexOf(10, pos + 1)) !== -1) {
-                if (lineCount >= capacity) {
-                    const newCapacity = capacity * 2;
-                    const newArr = new BigInt64Array(newCapacity);
-                    newArr.set(tempOffsets);
-                    tempOffsets = newArr;
-                    capacity = newCapacity;
-                }
-                tempOffsets[lineCount++] = offset + BigInt(pos) + 1n;
-            }
-
-            offset += BigInt(chunk.length);
-            processedBytes += chunk.length;
-
-            if (processedBytes % (100 * 1024 * 1024) === 0 || processedBytes >= size) {
-                const progress = (processedBytes / size) * 100;
-                respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress } });
-            }
+    if (useNativeEngine) {
+        try {
+            const t0 = performance.now();
+            const rawOffsets: Uint8Array = await rpcCall('indexLogFile', { path });
+            const count = Math.floor(rawOffsets.byteLength / 8);
+            const aligned =
+                rawOffsets.byteOffset % 8 === 0
+                    ? new BigInt64Array(rawOffsets.buffer, rawOffsets.byteOffset, count)
+                    : new BigInt64Array(rawOffsets.slice().buffer);
+            lineOffsets = aligned;
+            lineCount = Math.max(1, count);
+            indexedNatively = true;
+            console.log(`[Worker] Native Rust SWAR indexing complete: ${lineCount} lines in ${(performance.now() - t0).toFixed(1)}ms`);
+        } catch (nativeErr) {
+            console.warn('[Worker] Native indexLogFile failed, falling back to chunked RPC:', nativeErr);
+            hasNativeEngine = false;
         }
-    } catch (e) {
-        console.error('Local File Indexing failed', e);
-        respond({ type: 'ERROR', payload: 'Failed to index local file via RPC' });
-        return;
     }
 
-    lineOffsets = tempOffsets.subarray(0, lineCount);
+    if (!indexedNatively) {
+        initSubWorkers(); // Spawn to proceed with WASM initialization in parallel
+
+        // Memory efficient indexing
+        let capacity = 5 * 1024 * 1024; // Start with 5M lines
+        let tempOffsets = new BigInt64Array(capacity);
+        tempOffsets[0] = 0n;
+        lineCount = 1;
+
+        let offset = 0n;
+        let processedBytes = 0;
+        const chunkSize = 50 * 1024 * 1024;
+
+        try {
+            console.log(`[Worker] Starting Local File Indexing: ${path} (${Math.round(size / 1024 / 1024)}MB, chunkSize=50MB)`);
+            while (processedBytes < size) {
+                const end = Math.min(processedBytes + chunkSize, size);
+                const chunk: Uint8Array = await rpcCall('readFileSegment', { path, start: processedBytes, end });
+
+                let pos = -1;
+                while ((pos = chunk.indexOf(10, pos + 1)) !== -1) {
+                    if (lineCount >= capacity) {
+                        const newCapacity = capacity * 2;
+                        const newArr = new BigInt64Array(newCapacity);
+                        newArr.set(tempOffsets);
+                        tempOffsets = newArr;
+                        capacity = newCapacity;
+                    }
+                    tempOffsets[lineCount++] = offset + BigInt(pos) + 1n;
+                }
+
+                offset += BigInt(chunk.length);
+                processedBytes += chunk.length;
+
+                if (processedBytes % (100 * 1024 * 1024) === 0 || processedBytes >= size) {
+                    const progress = (processedBytes / size) * 100;
+                    respond({ type: 'STATUS_UPDATE', payload: { status: 'indexing', progress } });
+                }
+            }
+        } catch (e) {
+            console.error('Local File Indexing failed', e);
+            respond({ type: 'ERROR', payload: 'Failed to index local file via RPC' });
+            return;
+        }
+
+        lineOffsets = tempOffsets.subarray(0, lineCount);
+    }
 
     if (lineCount <= filteredIndicesBuffer.length) {
         for (let i = 0; i < lineCount; i++) filteredIndicesBuffer[i] = i;
@@ -724,6 +749,55 @@ const applyFilter = async (payload: LogRule & { quickFilter?: 'none' | 'error' |
     };
 
     const fileSizeForPlan = isLocalFileMode ? localFileSize : (currentFile ? currentFile.size : 0);
+
+    if (isLocalFileMode && localFilePath && hasNativeEngine && !isStreamMode) {
+        const cachedMatch = filterCache.findBestParent(filterSnapshot, totalLines);
+        if (cachedMatch?.exact) {
+            console.log(`[Worker] Native engine exact-cache hit (${cachedMatch.entry.rawMatchedIndices.length} matches)`);
+            finalizeFilterMatches(cachedMatch.entry.rawMatchedIndices, false);
+            return;
+        }
+        if (cachedMatch && cachedMatch.entry.rawMatchedIndices.length === 0) {
+            console.log(`[Worker] Native engine empty-instant hit (0 matches)`);
+            finalizeFilterMatches(new Int32Array(0), true);
+            return;
+        }
+
+        try {
+            const parentKey = cachedMatch ? cachedMatch.entry.snapshot.key : null;
+            const rawMatches: Uint8Array = await rpcCall('filterLogFile', {
+                path: localFilePath,
+                rule: {
+                    quickFilter: currentQuickFilterVal,
+                    happyCombosCaseSensitive: !!normalizedRule.happyCombosCaseSensitive,
+                    blockListCaseSensitive: !!normalizedRule.blockListCaseSensitive,
+                    excludes: normalizedRule.excludes,
+                    includeGroups: normalizedRule.includeGroups,
+                },
+                snapshotKey: filterSnapshot.key,
+                parentKey,
+            });
+            if (filterRequestId !== currentFilterRequestId) return;
+
+            const matchCount = Math.floor(rawMatches.byteLength / 4);
+            const matchedIndices =
+                rawMatches.byteOffset % 4 === 0
+                    ? new Int32Array(rawMatches.buffer, rawMatches.byteOffset, matchCount)
+                    : new Int32Array(rawMatches.slice().buffer);
+
+            const elapsedMs = performance.now() - filterStartTime;
+            console.log(
+                `[Worker] Native Rust ${parentKey ? 'incremental' : 'full'} filter complete in ${elapsedMs.toFixed(1)}ms. Matches: ${matchedIndices.length}`
+            );
+            finalizeFilterMatches(matchedIndices, true);
+            return;
+        } catch (nativeFilterErr) {
+            if (filterRequestId !== currentFilterRequestId) return;
+            console.warn('[Worker] Native filterLogFile failed, falling back to JS/SubWorker path:', nativeFilterErr);
+            hasNativeEngine = false;
+        }
+    }
+
     const incrementalPlan = selectIncrementalFilterPlan({
         cache: filterCache,
         nextSnapshot: filterSnapshot,
@@ -939,7 +1013,7 @@ ctx.onmessage = async (evt: MessageEvent<LogWorkerMessage>) => {
                 respond({ type: 'INDEX_COMPLETE', payload: { totalLines: lineOffsets ? lineOffsets.length : 0 } });
                 return;
             }
-            await buildLocalFileIndex(payload.path, payload.size);
+            await buildLocalFileIndex(payload.path, payload.size, !!payload.hasNativeEngine);
             break;
         case 'INIT_STREAM':
             initStream(payload);

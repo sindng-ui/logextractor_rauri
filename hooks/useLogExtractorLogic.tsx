@@ -16,6 +16,7 @@ import { useLogExportActions } from './useLogExportActions';
 import { useLogSelection } from './useLogSelection';
 import { useLogWorkerEvents } from './useLogWorkerEvents';
 import { workerRegistry } from './LogWorkerRegistry';
+import { clearBrowserFilePersistence } from '../utils/browserFilePersistence';
 // import LogProcessorWorker from '../workers/LogProcessor.worker.ts?worker'; // Registry에서 관리
 
 
@@ -33,6 +34,7 @@ export interface LogExtractorLogicProps {
     setConfigPanelWidth: (width: number) => void;
     tabId: string;
     initialFilePath?: string;
+    fileOpenToken?: number;
     initialFile?: File | null; // ✅ Add support for direct File object
     onFileChange?: (filePath: string) => void;
     isActive?: boolean;
@@ -42,6 +44,7 @@ export interface LogExtractorLogicProps {
     setIsSearchFocused?: (focused: boolean) => void; // ✅ Lifted State Setter
     onAddTab?: (title: string, content: string) => void; // ✅ New Tab Callback
     onOpenFile?: (file: File) => void; // 🎯 전역 파일 오픈 위임
+    onOpenFilePath?: (filePath: string) => void;
 }
 
 // Segmentation for Large Files (Browser Limit workaround)
@@ -70,12 +73,13 @@ export const MAX_SEGMENT_SIZE = 1_350_000;
 export const useLogExtractorLogic = ({
     rules, onUpdateRules, onExportSettings, onImportSettings,
     configPanelWidth, setConfigPanelWidth,
-    tabId, initialFilePath, initialFile, onFileChange,
+    tabId, initialFilePath, fileOpenToken, initialFile, onFileChange,
     isActive = true,
     isPanelOpen, setIsPanelOpen,
     isSearchFocused: propIsSearchFocused, setIsSearchFocused: propSetIsSearchFocused, // ✅ Destructure new props
     onAddTab, // ✅ New Tab Callback
-    onOpenFile // 🎯 전역 파일 오픈 위임
+    onOpenFile, // 🎯 전역 파일 오픈 위임
+    onOpenFilePath
 }: LogExtractorLogicProps) => {
 
     // ✅ Search Focus State (Lifted or Local Fallback)
@@ -463,8 +467,16 @@ export const useLogExtractorLogic = ({
     const lastFilterHashRight = useRef<string>('');
  
     // === Phase 2: File Operations & Persistence (Extracted) ===
-    const { loadState, handleLeftFileChange, handleRightFileChange } = useLogFileOperations({
-        tabId, initialFilePath, initialFile, onFileChange,
+    const {
+        loadState,
+        handleLeftFileChange,
+        handleRightFileChange,
+        handleBrowseNative,
+        pendingRestoreLeft,
+        pendingRestoreRight,
+        handleRestorePendingFile,
+    } = useLogFileOperations({
+        tabId, initialFilePath, fileOpenToken, initialFile, isActive, onFileChange,
         leftWorkerRef, rightWorkerRef, leftViewerRef, rightViewerRef, tizenSocket,
         activeStreamRequestIdLeft, activeStreamRequestIdRight, pendingScrollTop,
         setLeftFileName, setLeftFilePath, setLeftWorkerReady, setLeftIndexingProgress,
@@ -474,7 +486,9 @@ export const useLogExtractorLogic = ({
         setRightTotalLines, setRightFilteredCount, setRightBookmarks, lastFilterHashRight,
         leftFilePath, rightFilePath, activeLineIndexLeft,
         isDualView, setIsDualView, // ✅ Pass Dual View state for aggregate persistence
-        onOpenFile // 🎯 위임 핸들러 전달
+        onOpenFile, // 🎯 위임 핸들러 전달
+        onOpenFilePath,
+        addToast
     });
  
     // Initialize Left/Right Workers & Load State
@@ -818,7 +832,8 @@ export const useLogExtractorLogic = ({
         setSelectedIndicesLeft(new Set());
         setLeftBookmarks(new Set()); // Clear bookmarks
         lastFilterHashLeft.current = '';
-    }, []);
+        clearBrowserFilePersistence(tabId, 'left');
+    }, [tabId]);
 
     const handleRightReset = useCallback(() => {
         setRightFileName('');
@@ -830,7 +845,8 @@ export const useLogExtractorLogic = ({
         setSelectedIndicesRight(new Set());
         setRightBookmarks(new Set()); // Clear bookmarks
         lastFilterHashRight.current = '';
-    }, []);
+        clearBrowserFilePersistence(tabId, 'right');
+    }, [tabId]);
 
     const handlePasteClipboard = useCallback(async (pane: 'left' | 'right' = 'left') => {
         try {
@@ -1184,7 +1200,7 @@ export const useLogExtractorLogic = ({
         handleLineDoubleClickAction,
         leftFileName, leftWorkerReady, leftIndexingProgress, leftTotalLines, leftFilteredCount,
         activeLineIndexLeft, setActiveLineIndexLeft, selectedIndicesLeft, setSelectedIndicesLeft,
-        handleLeftFileChange, handleLeftReset, requestLeftLines, requestLeftRawLines, handlePasteClipboard,
+        handleLeftFileChange, handleBrowseNative, pendingRestoreLeft, pendingRestoreRight, handleRestorePendingFile, handleLeftReset, requestLeftLines, requestLeftRawLines, handlePasteClipboard,
         rightFileName, rightWorkerReady, rightIndexingProgress, rightTotalLines, rightFilteredCount,
         activeLineIndexRight, setActiveLineIndexRight, selectedIndicesRight, setSelectedIndicesRight,
         leftBookmarks, rightBookmarks, toggleLeftBookmark, toggleRightBookmark,

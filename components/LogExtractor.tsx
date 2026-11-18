@@ -10,16 +10,9 @@ import { workerRegistry } from '../hooks/LogWorkerRegistry';
 import { LogViewPreferencesProvider } from './LogViewer/LogViewPreferencesContext';
 
 import { useFindInAll } from '../hooks/useFindInAll';
-
-
-
-interface Tab {
-    id: string;
-    title: string;
-    initialFile: File | null;
-    filePath?: string;
-}
-
+import { useTabPointerDrag } from '../hooks/useTabPointerDrag';
+import { useTauriFileDrop } from '../hooks/useTauriFileDrop';
+import { captureBrowserDropHandle, clearBrowserFilePersistence } from '../utils/browserFilePersistence';
 import { useHappyTool } from '../contexts/HappyToolContext';
 
 interface Tab {
@@ -27,6 +20,7 @@ interface Tab {
     title: string;
     initialFile: File | null;
     filePath?: string;
+    openRequestToken?: number;
 }
 
 const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
@@ -162,39 +156,137 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
         return 2;
     });
 
-    // ✅ Performance: Debounce localStorage writes (1000ms)
-    // Prevents synchronous I/O blocking during rapid tab switching or reordering
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            const safeTabs = tabs.map(t => ({ id: t.id, title: t.title, filePath: t.filePath }));
+    // Persist tabs synchronously so hard reloads (Ctrl+Shift+R) and close never lose state
+    const latestTabsRef = React.useRef(tabs);
+    const latestActiveTabIdRef = React.useRef(activeTabId);
+    latestTabsRef.current = tabs;
+    latestActiveTabIdRef.current = activeTabId;
+
+    const flushTabsToStorage = useCallback(() => {
+        try {
+            const safeTabs = latestTabsRef.current.map(t => ({
+                id: t.id,
+                title: t.title,
+                filePath: t.filePath,
+            }));
             localStorage.setItem('openTabs', JSON.stringify(safeTabs));
-            localStorage.setItem('activeTabId', activeTabId);
-        }, 1000);
+            localStorage.setItem('activeTabId', latestActiveTabIdRef.current);
+        } catch (e) {
+            console.error('[LogExtractor] Failed to persist tabs', e);
+        }
+    }, []);
 
-        return () => clearTimeout(timer);
-    }, [tabs, activeTabId]);
+    useEffect(() => {
+        flushTabsToStorage();
+    }, [tabs, activeTabId, flushTabsToStorage]);
 
-    // ✅ Drag & Drop state
-    const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
-    const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
-    const [dragOverPosition, setDragOverPosition] = useState<'left' | 'right'>('right');
+    useEffect(() => {
+        window.addEventListener('beforeunload', flushTabsToStorage);
+        window.addEventListener('pagehide', flushTabsToStorage);
+        return () => {
+            window.removeEventListener('beforeunload', flushTabsToStorage);
+            window.removeEventListener('pagehide', flushTabsToStorage);
+            flushTabsToStorage();
+        };
+    }, [flushTabsToStorage]);
 
+    // Pointer-based tab reordering (compatible with Tauri dragDropEnabled: true)
+    const {
+        draggedTabId,
+        dragOverTabId,
+        dragOverPosition,
+        handleTabPointerDown,
+        handleTabClickCapture,
+    } = useTabPointerDrag(setTabs);
 
-    const handleAddTab = useCallback((file: File | null = null) => {
-        const newTabId = `tab-${tabCounter}`;
+    const tabCounterRef = React.useRef(tabCounter);
+    tabCounterRef.current = tabCounter;
+
+    const handleAddTab = useCallback((file: File | null = null, explicitPath?: string) => {
+        const currentCounter = tabCounterRef.current;
+        const newTabId = `tab-${currentCounter}`;
+        tabCounterRef.current = currentCounter + 1;
 
         // Safety: Ensure any stale state for this reused ID is cleared
         deleteStoredValue(`tabState_${newTabId}`);
 
-        const newTitle = file ? file.name : `New Log ${tabCounter}`;
-        const filePath = file && 'path' in file ? (file as any).path : undefined;
+        const filePath = explicitPath || (file && 'path' in file ? (file as any).path : undefined);
+        const newTitle = file
+            ? file.name
+            : (filePath ? (filePath.split(/[/\\]/).pop() || `New Log ${currentCounter}`) : `New Log ${currentCounter}`);
 
         setTabs(prev => [...prev, { id: newTabId, title: newTitle, initialFile: file, filePath }]);
         setActiveTabId(newTabId);
-        setTabCounter(prev => prev + 1);
+        setTabCounter(tabCounterRef.current);
+    }, []);
 
+    /**
+     * Native OS path opener (Tauri browse dialog & drag-and-drop) mirroring Notepad++ tab rules
+     * while always preserving OS `filePath` for auto-restore on restart.
+     */
+    const handleOpenFilePath = useCallback(async (targetPath: string) => {
+        if (!targetPath) return;
+        const fileName = targetPath.split(/[/\\]/).pop() || targetPath;
+        const currentTabs = latestTabsRef.current;
+        const currentActiveId = latestActiveTabIdRef.current;
 
-    }, [tabCounter]);
+        const existingTab = currentTabs.find(t =>
+            t.filePath && t.filePath.toLowerCase() === targetPath.toLowerCase()
+        );
+
+        if (existingTab) {
+            setActiveTabId(existingTab.id);
+            setTabs(current => current.map(t =>
+                t.id === existingTab.id
+                    ? {
+                        ...t,
+                        title: fileName,
+                        initialFile: null,
+                        filePath: targetPath,
+                        openRequestToken: (t.openRequestToken || 0) + 1,
+                    }
+                    : t
+            ));
+            return;
+        }
+
+        const activeTab = currentTabs.find(t => t.id === currentActiveId);
+        let activeTabHasFile = false;
+
+        if (activeTab) {
+            if (activeTab.initialFile || activeTab.filePath) {
+                activeTabHasFile = true;
+            } else {
+                try {
+                    const activeTabStateStr = await getStoredValue(`tabState_${currentActiveId}`);
+                    if (activeTabStateStr) {
+                        const parsed = JSON.parse(activeTabStateStr);
+                        if (parsed.filePath) activeTabHasFile = true;
+                    }
+                } catch (e) {
+                    console.error('[LogExtractor] Failed to read active tab state from DB during path open check', e);
+                }
+            }
+        }
+
+        if (!activeTabHasFile && activeTab) {
+            setTabs(current => current.map(t =>
+                t.id === currentActiveId
+                    ? {
+                        ...t,
+                        title: fileName,
+                        initialFile: null,
+                        filePath: targetPath,
+                        openRequestToken: (t.openRequestToken || 0) + 1,
+                    }
+                    : t
+            ));
+        } else {
+            handleAddTab(null, targetPath);
+        }
+    }, [handleAddTab]);
+
+    useTauriFileDrop({ isActive, onOpenFilePath: handleOpenFilePath });
 
     /**
      * 🎯 [Notepad++ 전역 파일 오프너 허브]
@@ -290,6 +382,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
 
         // Cleanup storage & workers
         deleteStoredValue(`tabState_${tabId}`);
+        clearBrowserFilePersistence(tabId);
 
 
 
@@ -324,6 +417,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             const file = e.dataTransfer.files[0];
+            captureBrowserDropHandle(file, e.dataTransfer);
             handleOpenFile(file); // 🎯 기존 handleAddTab 대신 전역 파일 오픈 위임으로 변경!
         }
     }, [handleOpenFile]);
@@ -356,6 +450,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
         tabs.forEach(t => {
             if (t.id !== tabId) {
                 deleteStoredValue(`tabState_${t.id}`);
+                clearBrowserFilePersistence(t.id);
                 workerRegistry.terminateWorkers(t.id);
             }
         });
@@ -368,6 +463,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
         // Cleanup all storage & workers
         tabs.forEach(t => {
             deleteStoredValue(`tabState_${t.id}`);
+            clearBrowserFilePersistence(t.id);
             workerRegistry.terminateWorkers(t.id);
         });
 
@@ -410,91 +506,6 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
             },
         ]);
     }, [tabs, showContextMenu, handleDuplicateTab, handleCloseTab, handleCloseOtherTabs, handleCloseAllTabs]);
-
-    // ✅ Drag & Drop handlers
-    const handleTabDragStart = useCallback((e: React.DragEvent, tabId: string) => {
-        setDraggedTabId(tabId);
-        e.dataTransfer.effectAllowed = 'move';
-        // Set a semi-transparent drag image
-        if (e.currentTarget instanceof HTMLElement) {
-            const dragImage = e.currentTarget.cloneNode(true) as HTMLElement;
-            dragImage.style.opacity = '0.5';
-            document.body.appendChild(dragImage);
-            e.dataTransfer.setDragImage(dragImage, 0, 0);
-            setTimeout(() => document.body.removeChild(dragImage), 0);
-        }
-    }, []);
-
-    const handleTabDragOver = useCallback((e: React.DragEvent, tabId: string) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-
-        if (draggedTabId && draggedTabId !== tabId) {
-            setDragOverTabId(tabId);
-
-            // Calculate drop position based on mouse X relative to tab center
-            const rect = e.currentTarget.getBoundingClientRect();
-            const mouseX = e.clientX;
-            const tabCenter = rect.left + rect.width / 2;
-            setDragOverPosition(mouseX < tabCenter ? 'left' : 'right');
-        }
-    }, [draggedTabId]);
-
-    const handleTabDragLeave = useCallback(() => {
-        setDragOverTabId(null);
-        setDragOverPosition('right');
-    }, []);
-
-    const handleTabDrop = useCallback((e: React.DragEvent, targetTabId: string) => {
-        e.preventDefault();
-
-        if (!draggedTabId || draggedTabId === targetTabId) {
-            setDraggedTabId(null);
-            setDragOverTabId(null);
-            return;
-        }
-
-        const draggedIndex = tabs.findIndex(t => t.id === draggedTabId);
-        const targetIndex = tabs.findIndex(t => t.id === targetTabId);
-
-        if (draggedIndex === -1 || targetIndex === -1) {
-            setDraggedTabId(null);
-            setDragOverTabId(null);
-            setDragOverPosition('right');
-            return;
-        }
-
-        // ✅ Calculate drop position explicitly from event to avoid state race conditions
-        const rect = e.currentTarget.getBoundingClientRect();
-        const dropPos = (e.clientX < (rect.left + rect.width / 2)) ? 'left' : 'right';
-
-        // ✅ Calculate insert position based on calculated drop position
-        const newTabs = [...tabs];
-        const [draggedTab] = newTabs.splice(draggedIndex, 1);
-
-        // Adjust target index based on position and if we removed before target
-        let insertIndex = targetIndex;
-        if (dropPos === 'right') {
-            insertIndex = targetIndex + 1;
-        }
-        // If dragged from before target, decrement insert index
-        if (draggedIndex < targetIndex) {
-            insertIndex--;
-        }
-
-        newTabs.splice(insertIndex, 0, draggedTab);
-
-        setTabs(newTabs);
-        setDraggedTabId(null);
-        setDragOverTabId(null);
-        setDragOverPosition('right');
-    }, [draggedTabId, tabs]);
-
-    const handleTabDragEnd = useCallback(() => {
-        setDraggedTabId(null);
-        setDragOverTabId(null);
-        setDragOverPosition('right');
-    }, []);
 
     // Tab color function (similar to Post Tool groups)
     const getTabStyles = (id: string) => {
@@ -603,14 +614,11 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
                         return (
                             <div
                                 key={tab.id}
-                                draggable
+                                data-tab-id={tab.id}
                                 onClick={() => setActiveTabId(tab.id)}
+                                onClickCapture={handleTabClickCapture}
                                 onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
-                                onDragStart={(e) => handleTabDragStart(e, tab.id)}
-                                onDragOver={(e) => handleTabDragOver(e, tab.id)}
-                                onDragLeave={handleTabDragLeave}
-                                onDrop={(e) => handleTabDrop(e, tab.id)}
-                                onDragEnd={handleTabDragEnd}
+                                onPointerDown={(e) => handleTabPointerDown(e, tab.id)}
                                 className={`
                                     group relative flex items-center gap-2 px-4 py-1.5 min-w-[120px] max-w-[200px]
                                     text-xs font-medium cursor-move rounded-t-lg border-t border-l border-r
@@ -641,6 +649,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
                                 />
                                 <span className="truncate flex-1">{tab.title}</span>
                                 <button
+                                    data-tab-close="true"
                                     onClick={(e) => handleCloseTab(e, tab.id)}
                                     className={`
                                         opacity-0 group-hover:opacity-100 p-0.5 rounded-md transition-all duration-200
@@ -672,7 +681,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
                 </div>
             </div>
         </div >
-    ), [tabs, activeTabId, handleAddTab, handleCloseTab, handleGlobalDrop, draggedTabId, dragOverTabId, handleTabDragStart, handleTabDragOver, handleTabDragLeave, handleTabDrop, handleTabDragEnd, toggleSidebar, isFocusMode]);
+    ), [tabs, activeTabId, handleAddTab, handleCloseTab, handleGlobalDrop, draggedTabId, dragOverTabId, dragOverPosition, handleTabPointerDown, handleTabClickCapture, toggleSidebar, isFocusMode]);
 
     const handleTitleChange = useCallback((tabId: string, newTitle: string) => {
         setTabs(current => current.map(t => t.id === tabId ? { ...t, title: newTitle } : t));
@@ -713,6 +722,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
                                 setConfigPanelWidth={setConfigPanelWidth}
                                 tabId={tab.id}
                                 initialFilePath={tab.filePath}
+                                fileOpenToken={tab.openRequestToken}
                                 initialFile={tab.initialFile} // ✅ Pass the File object
                                 onFileChange={(newPath) => {
                                     setTabs(current => current.map(t => t.id === tab.id ? { ...t, filePath: newPath } : t));
@@ -724,6 +734,7 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
                                 setIsSearchFocused={setIsSearchFocused} // ✅ Pass Down
                                 onAddTab={handleArchiveToTab} // ✅ New Tab Callback
                                 onOpenFile={handleOpenFile} // 🎯 전역 파일 오픈 위임 추가!
+                                onOpenFilePath={handleOpenFilePath}
                             >
                                 <SessionWrapper
                                     isActive={isActive && tab.id === activeTabId}

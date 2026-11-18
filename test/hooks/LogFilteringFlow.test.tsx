@@ -9,6 +9,7 @@ import { workerRegistry } from '../../hooks/LogWorkerRegistry';
 vi.mock('../../utils/db', () => ({
     getStoredValue: vi.fn().mockResolvedValue(null),
     setStoredValue: vi.fn(),
+    deleteStoredValue: vi.fn(),
 }));
 
 vi.mock('../../contexts/ToastContext', () => ({

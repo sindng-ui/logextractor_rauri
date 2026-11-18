@@ -19,7 +19,7 @@
         "minWidth": 650,
         "minHeight": 600,
         "decorations": false,
-        "dragDropEnabled": false,
+        "dragDropEnabled": true,
         "backgroundColor": "#0b0f19",
         "additionalBrowserArgs": "--enable-features=SharedArrayBuffer --disable-features=CalculateNativeWinOcclusion"
       }
