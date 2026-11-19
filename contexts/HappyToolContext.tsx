@@ -48,6 +48,10 @@ export interface HappyToolContextType {
     isSettingsOpen: boolean;
     setIsSettingsOpen: React.Dispatch<React.SetStateAction<boolean>>;
 
+    // Apps Launcher Modal (Ctrl+Shift+P)
+    isAppsLauncherOpen: boolean;
+    setIsAppsLauncherOpen: React.Dispatch<React.SetStateAction<boolean>>;
+
     // Reactive Ambient Mood
     ambientMood: 'idle' | 'working' | 'error' | 'success';
     setAmbientMood: React.Dispatch<React.SetStateAction<'idle' | 'working' | 'error' | 'success'>>;

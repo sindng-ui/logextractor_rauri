@@ -5,6 +5,7 @@ interface PluginContainerProps {
     plugin: HappyPlugin;
     isActive: boolean;
     onLoaded?: () => void;
+    extraProps?: Record<string, any>;
 }
 
 // Helper to notify when Suspense is done
@@ -15,7 +16,7 @@ const LoadNotifier: React.FC<{ onLoaded?: () => void }> = ({ onLoaded }) => {
     return null;
 };
 
-const PluginContainer: React.FC<PluginContainerProps> = ({ plugin, isActive, onLoaded }) => {
+const PluginContainer: React.FC<PluginContainerProps> = ({ plugin, isActive, onLoaded, extraProps }) => {
     const Component = plugin.component;
     const [hasBeenActive, setHasBeenActive] = React.useState(isActive);
 
@@ -39,7 +40,7 @@ const PluginContainer: React.FC<PluginContainerProps> = ({ plugin, isActive, onL
             </div>
         }>
             <div className={isActive ? "h-full w-full" : "hidden"}>
-                <Component isActive={isActive} />
+                <Component isActive={isActive} {...extraProps} />
                 <LoadNotifier onLoaded={onLoaded} />
             </div>
         </React.Suspense>

@@ -59,8 +59,8 @@ export const CommandProvider: React.FC<{ children: ReactNode }> = ({ children })
             const shift = e.shiftKey;
             const alt = e.altKey;
 
-            // Palette Toggle (Standard)
-            if (ctrl && (key === 'k' || key === 'p')) {
+            // Palette Toggle (Standard: Ctrl+K or Ctrl+P without Shift/Alt, so Ctrl+Shift+P is reserved for Apps Launcher)
+            if (ctrl && !shift && !alt && (key === 'k' || key === 'p')) {
                 e.preventDefault();
                 togglePalette();
                 return;

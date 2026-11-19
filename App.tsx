@@ -14,7 +14,9 @@ import { HappyPlugin } from './plugins/types';
 import CommandPalette from './components/CommandPalette/CommandPalette';
 import LoadingSplash from './components/LoadingSplash';
 import WindowTitleBarControls from './components/WindowTitleBarControls';
-import { Settings, FileUp, FileDown, Archive, FileText } from 'lucide-react';
+import AppsLauncherModal from './components/Apps/AppsLauncherModal';
+import { APPS_REGISTRY } from './plugins/appsRegistry';
+import { Settings, FileUp, FileDown, Archive, FileText, LayoutGrid } from 'lucide-react';
 
 const LOG_EXTRACTOR_PLUGIN: HappyPlugin = {
   id: ToolId.LOG_EXTRACTOR,
@@ -26,13 +28,23 @@ const LOG_EXTRACTOR_PLUGIN: HappyPlugin = {
 
 const CommandRegistrar: React.FC<{
   setIsSettingsOpen: (open: boolean) => void;
+  setIsAppsLauncherOpen: React.Dispatch<React.SetStateAction<boolean>>;
   handleExport: () => void;
   handleImport: () => void;
-}> = ({ setIsSettingsOpen, handleExport, handleImport }) => {
+}> = ({ setIsSettingsOpen, setIsAppsLauncherOpen, handleExport, handleImport }) => {
   const { registerCommand, unregisterCommand } = useCommand();
   const { openSidebar } = useLogArchiveContext();
 
   useEffect(() => {
+    registerCommand({
+      id: 'open-apps-launcher',
+      title: 'Open Apps Launcher',
+      section: 'Tools',
+      icon: <LayoutGrid size={18} />,
+      action: () => setIsAppsLauncherOpen(true),
+      keywords: ['apps', 'json', 'beautify', 'tools', 'launcher']
+    });
+
     registerCommand({
       id: 'open-log-archive',
       title: 'Open Log Archive',
@@ -68,12 +80,13 @@ const CommandRegistrar: React.FC<{
     });
 
     return () => {
+      unregisterCommand('open-apps-launcher');
       unregisterCommand('global-settings');
       unregisterCommand('export-settings');
       unregisterCommand('import-settings');
       unregisterCommand('open-log-archive');
     };
-  }, [registerCommand, unregisterCommand, setIsSettingsOpen, handleExport, handleImport, openSidebar]);
+  }, [registerCommand, unregisterCommand, setIsSettingsOpen, setIsAppsLauncherOpen, handleExport, handleImport, openSidebar]);
 
   return null;
 };
@@ -120,6 +133,28 @@ const AppContent: React.FC = () => {
   });
 
   const [enabledPlugins, setEnabledPlugins] = useState<string[]>([ToolId.LOG_EXTRACTOR]);
+  const [activePluginId, setActivePluginId] = useState<string>(ToolId.LOG_EXTRACTOR);
+  const [isAppsLauncherOpen, setIsAppsLauncherOpen] = useState<boolean>(false);
+
+  const appLauncherPlugins = React.useMemo<HappyPlugin[]>(
+    () =>
+      APPS_REGISTRY.map((app, idx) => ({
+        id: app.id,
+        name: app.name,
+        icon: app.icon,
+        component: app.component,
+        order: idx + 2,
+      })),
+    []
+  );
+
+  const subAppExtraProps = React.useMemo(
+    () => ({
+      onBackToLogs: () => setActivePluginId(ToolId.LOG_EXTRACTOR),
+      onOpenApps: () => setIsAppsLauncherOpen(true),
+    }),
+    []
+  );
 
   // Focus Mode State (F11)
   const [isFocusMode, setIsFocusMode] = useState(false);
@@ -345,7 +380,9 @@ const AppContent: React.FC = () => {
     configActiveTab,
     setConfigActiveTab,
     isSettingsOpen,
-    setIsSettingsOpen
+    setIsSettingsOpen,
+    isAppsLauncherOpen,
+    setIsAppsLauncherOpen
   }), [
     logRules,
     savedRequests,
@@ -364,7 +401,8 @@ const AppContent: React.FC = () => {
     ambientMood,
     netTrafficSettings,
     configActiveTab,
-    isSettingsOpen
+    isSettingsOpen,
+    isAppsLauncherOpen
   ]);
 
   const handleBackendLoadingComplete = () => {
@@ -421,6 +459,19 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+P: Toggle Apps Launcher (IME-safe via e.code === 'KeyP')
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.shiftKey &&
+        !e.altKey &&
+        (e.code === 'KeyP' || e.key.toLowerCase() === 'p')
+      ) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setIsAppsLauncherOpen(prev => !prev);
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W' || e.key === 't' || e.key === 'T')) {
         e.preventDefault();
       }
@@ -475,6 +526,7 @@ const AppContent: React.FC = () => {
     <HappyToolProvider value={contextValue}>
       <CommandRegistrar
         setIsSettingsOpen={setIsSettingsOpen}
+        setIsAppsLauncherOpen={setIsAppsLauncherOpen}
         handleExport={handleExportSettings}
         handleImport={handleImportClick}
       />
@@ -496,12 +548,29 @@ const AppContent: React.FC = () => {
             {!isSettingsLoaded ? (
               <div className="flex h-full items-center justify-center text-slate-500">Loading settings...</div>
             ) : (
-              <PluginContainer
-                plugin={LOG_EXTRACTOR_PLUGIN}
-                isActive={true}
-                onLoaded={handlePluginLoaded}
-              />
+              <>
+                <PluginContainer
+                  plugin={LOG_EXTRACTOR_PLUGIN}
+                  isActive={activePluginId === ToolId.LOG_EXTRACTOR}
+                  onLoaded={handlePluginLoaded}
+                />
+                {appLauncherPlugins.map(appPlugin => (
+                  <PluginContainer
+                    key={appPlugin.id}
+                    plugin={appPlugin}
+                    isActive={activePluginId === appPlugin.id}
+                    extraProps={subAppExtraProps}
+                  />
+                ))}
+              </>
             )}
+            <AppsLauncherModal
+              isOpen={isAppsLauncherOpen}
+              onClose={() => setIsAppsLauncherOpen(false)}
+              apps={APPS_REGISTRY}
+              activePluginId={activePluginId}
+              onSelectApp={setActivePluginId}
+            />
             <SettingsModal
               isOpen={isSettingsOpen}
               onClose={() => setIsSettingsOpen(false)}

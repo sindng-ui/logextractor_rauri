@@ -21,7 +21,7 @@ const TopBar: React.FC<{
     isSplitAnalyzerOpen?: boolean;
 }> = ({ onReturnFocus, onSplitAnalyze, isSplitAnalyzing, isSplitAnalyzerOpen }) => {
     const { addToast } = useToast();
-    const { setIsSettingsOpen } = useHappyTool();
+    const { isAppsLauncherOpen, setIsAppsLauncherOpen } = useHappyTool();
     const {
         rules, selectedRuleId, setSelectedRuleId,
         handleCreateRule, handleDeleteRule, onExportSettings,
@@ -112,15 +112,19 @@ const TopBar: React.FC<{
 
     return (
         <div className=" border-b p-4 pl-3 pr-[140px] flex items-center justify-between shrink-0 h-16 z-50 title-drag relative" style={{ backgroundColor: '#0f172a', borderBottomColor: 'rgba(99, 102, 241, 0.3)' }}>
-            {/* Left Section: Settings & Mission & Rules */}
+            {/* Left Section: Apps Launcher & Mission & Rules */}
             <div className="flex items-center gap-4 no-drag">
                 <button
-                    onClick={() => setIsSettingsOpen(true)}
-                    className="w-10 h-10 flex items-center justify-center bg-slate-800/90 hover:bg-slate-700 border border-white/10 rounded-xl shadow-lg text-slate-400 hover:text-white transition-all duration-300 active:scale-95 group"
+                    onClick={() => setIsAppsLauncherOpen(prev => !prev)}
+                    className={`w-10 h-10 flex items-center justify-center rounded-xl border transition-[background-color,border-color,color,transform] duration-200 active:scale-95 group ${
+                        isAppsLauncherOpen
+                            ? 'bg-indigo-600/25 border-indigo-400/55 text-indigo-200'
+                            : 'bg-slate-800/85 hover:bg-indigo-500/15 border-indigo-500/20 hover:border-indigo-400/45 text-indigo-300/90 hover:text-indigo-200'
+                    }`}
                     style={{ WebkitAppRegion: 'no-drag' } as any}
-                    title="Settings (Ctrl+,)"
+                    title="Apps (Ctrl+Shift+P)"
                 >
-                    <Lucide.Settings size={18} className="group-hover:rotate-90 transition-transform duration-500" />
+                    <Lucide.LayoutGrid size={17} strokeWidth={1.9} className="transition-transform duration-200 group-hover:scale-105" />
                 </button>
             <div className="flex items-center space-x-4">
                     <div className="p-2 bg-indigo-500/10 rounded-lg border border-indigo-500/20"><Sparkles size={18} className="text-indigo-400" /></div>

@@ -341,6 +341,18 @@ export function createTauriElectronAPI() {
             return await invoke('save_file', { content });
         },
 
+        saveBinaryFile: async (
+            data: Uint8Array,
+            options?: { defaultName?: string; filterName?: string; extensions?: string[] }
+        ) => {
+            return await invoke<{ status: string; filePath?: string; error?: string }>('save_binary_file', {
+                data: Array.from(data),
+                defaultName: options?.defaultName ?? null,
+                filterName: options?.filterName ?? null,
+                extensions: options?.extensions ?? null,
+            });
+        },
+
         saveFileDirect: async (data: Uint8Array | string | number[], filePath: string) => {
             let bytes: number[];
             if (typeof data === 'string') {

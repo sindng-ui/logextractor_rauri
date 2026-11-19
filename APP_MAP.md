@@ -5,8 +5,9 @@ Welcome to the architectural map of **HappyTool Tauri** (Tauri 2.0 Standalone Hi
 ---
 
 ## 🏗️ 1. High-Level Architecture
-- **Frontend**: React 19 + TypeScript + Tailwind CSS + Vite (`index.tsx` -> `utils/tauriBridge.ts` -> `App.tsx` -> `LogExtractor.tsx` / `CliApp.tsx`)
-- **Workers & Engine**: Rust WebAssembly (`happy_filter_bg.wasm`) + 7 Dedicated Web Workers (`workers/`) + `SharedArrayBuffer` (COOP/COEP + WebView2 `additionalBrowserArgs`)
+- **Frontend**: React 19 + TypeScript + Tailwind CSS + Vite (`index.tsx` -> `utils/tauriBridge.ts` -> `App.tsx` -> `LogExtractor.tsx` / `JsonBeautify` [lazy via `Ctrl+Shift+P` Apps Launcher] / `CliApp.tsx`)
+- **Apps Launcher**: `Ctrl+Shift+P` (`App.tsx` -> `components/Apps/AppsLauncherModal.tsx` + `plugins/appsRegistry.ts`) — Zero-Blur 60fps spring launcher (currently hosts `JSON Beautify`, extensible by adding entries to `APPS_REGISTRY`).
+- **Workers & Engine**: Rust WebAssembly (`happy_filter_bg.wasm`) + 8 Dedicated Web Workers (`workers/`, including `JsonBeautify.worker.ts`) + `SharedArrayBuffer` (COOP/COEP + WebView2 `additionalBrowserArgs`)
 - **Desktop Native Core (Tauri 2.0 Rust)**:
   - `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`
   - `src-tauri/src/commands/file_io.rs` (Zero-Copy `tauri::ipc::Response` 50MB Segment Reader with 15s File Handle Pooling)

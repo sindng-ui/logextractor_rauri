@@ -266,6 +266,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                                         title: '🌐 Global',
                                         description: 'Shortcuts available globally',
                                         items: [
+                                            { action: 'Open Apps Launcher', keys: ['Ctrl', 'Shift', 'P'] },
                                             { action: 'Open Settings', keys: ['Ctrl', ','] },
                                             { action: 'Command Palette', keys: ['Ctrl', 'K'] },
                                             { action: 'Command Palette (Alt)', keys: ['Ctrl', 'P'] },

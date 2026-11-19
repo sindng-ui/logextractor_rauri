@@ -147,6 +147,7 @@ pub fn run() {
             file_io::stream_read_file,
             file_io::cancel_stream,
             file_io::save_file,
+            file_io::save_binary_file,
             file_io::save_file_direct,
             file_io::append_file_direct,
             file_io::select_log_file,

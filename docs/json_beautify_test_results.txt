@@ -1,0 +1,41 @@
+HappyTool Tauri — Apps Launcher & JSON Beautify Verification Results
+Date: 2026-11-19
+Command: npx vitest run test/jsonBeautify.test.ts
+
+======================================================================
+1. Unit & Functional Test Suite (8/8 PASSED)
+======================================================================
+[PASS] extracts JSON from a noisy log line (1ms)
+[PASS] repairs JSONC comments and trailing commas (1ms)
+[PASS] unwraps double-encoded JSON strings (0ms)
+[PASS] reports line and column snippet for genuinely broken JSON (4ms)
+[PASS] detects timestamps, colors, URLs, and embedded JSON strings (1ms)
+[PASS] parses, indexes, searches, graphs, columns, tables, and generates TS schema rapidly (70ms)
+[PASS] handles extreme nesting depth (Depth 250) without stack overflow (1ms)
+[PASS] persists snapshots <= 5MB, loads on-demand, keeps >5MB session-only, and cleans up deletions (PASS)
+
+======================================================================
+2. 550KB+ Complex Deep JSON Performance Benchmark
+======================================================================
+Payload Size   : 553.0 KB
+Total Nodes    : 36,755 nodes
+Max Depth      : 12
+----------------------------------------------------------------------
+Parse + 1-Pass Arena Indexing + Stats + Heavy Nodes : 42.3 ms (Worker thread, 0ms UI block)
+Full-Tree Jump Search (36,755 nodes)                :  1.9 ms
+Filter Tree Mode (Match Branches + Ancestors)       :  0.7 ms
+Visual Graph O(V) Layout (Canvas JSON Crack mode)   :  0.8 ms
+Finder Column Explorer (JSON Hero mode)             :  0.1 ms
+Smart Table Extraction (Object Array)               :  1.4 ms
+TypeScript Interface Auto-Generation                :  5.4 ms
+Lazy Virtual Pretty Code + Sort Keys A-Z            : 18.3 ms
+----------------------------------------------------------------------
+All thresholds met with large headroom (< 50ms core target, 60fps UI).
+
+======================================================================
+3. Production Build & Static Quality Checks
+======================================================================
+- vite build: PASSED (JsonBeautify lazy chunk: 76.59 kB / gzip 21.27 kB; JsonBeautify.worker.js: 23.85 kB)
+- TypeScript source check: 0 errors in workspace source files
+- CSS blur / backdrop-blur audit across all new files: 0 occurrences
+- Log Extractor regression guard: isActive isolation verified (zero impact on active sessions/workers)

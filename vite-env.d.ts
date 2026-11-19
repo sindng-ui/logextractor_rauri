@@ -34,6 +34,10 @@ interface ElectronAPI {
     getZoomFactor: () => number;
     copyToClipboard: (text: string) => Promise<void>;
     saveFile: (content: string) => Promise<{ status: string, filePath?: string }>;
+    saveBinaryFile?: (
+        data: Uint8Array,
+        options?: { defaultName?: string; filterName?: string; extensions?: string[] }
+    ) => Promise<{ status: string; filePath?: string; error?: string }>;
     openExternal: (url: string) => Promise<{ status: string, error?: string }>;
     getAppPath: () => Promise<string>;
     toggleFullscreen: (flag: boolean) => Promise<void>;

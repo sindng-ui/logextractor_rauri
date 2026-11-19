@@ -310,6 +310,39 @@ pub async fn save_file(content: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+pub async fn save_binary_file(
+    data: Vec<u8>,
+    default_name: Option<String>,
+    filter_name: Option<String>,
+    extensions: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let mut dialog = rfd::AsyncFileDialog::new();
+    if let Some(name) = default_name {
+        if !name.is_empty() {
+            dialog = dialog.set_file_name(&name);
+        }
+    }
+    if let (Some(fname), Some(exts)) = (filter_name, extensions) {
+        let ext_refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
+        if !ext_refs.is_empty() {
+            dialog = dialog.add_filter(&fname, &ext_refs);
+        }
+    }
+
+    let handle = dialog.save_file().await;
+    let Some(file_handle) = handle else {
+        return Ok(json!({ "status": "canceled" }));
+    };
+
+    let path_str = file_handle.path().to_string_lossy().to_string();
+    tokio::fs::write(file_handle.path(), &data)
+        .await
+        .map_err(|e| format!("Failed to save binary file: {}", e))?;
+
+    Ok(json!({ "status": "success", "filePath": path_str }))
+}
+
+#[tauri::command]
 pub async fn save_file_direct(data: Vec<u8>, file_path: String) -> Result<Value, String> {
     match tokio::fs::write(&file_path, &data).await {
         Ok(_) => Ok(json!({ "status": "success", "filePath": file_path })),
