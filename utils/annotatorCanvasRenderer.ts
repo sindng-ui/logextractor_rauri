@@ -417,14 +417,37 @@ function drawAnnotationItem(
       break;
     }
     case 'text': {
-      const lines = (item.text || '').split('\n');
+      const isPlaceholder = !item.text;
+      const lines = (item.text || 'Text').split('\n');
       ctx.font = `700 ${item.fontSize}px "Segoe UI", system-ui, sans-serif`;
-      const padX = item.variant === 'outline' ? 6 : 12;
-      const padY = item.variant === 'outline' ? 4 : 8;
+      const padX = item.variant === 'outline' ? 6 : item.variant === 'border' ? 10 : 12;
+      const padY = item.variant === 'outline' ? 4 : item.variant === 'border' ? 5 : 8;
       const lineH = Math.round(item.fontSize * 1.32);
       const maxW = Math.max(24, ...lines.map((l) => ctx.measureText(l).width));
       const boxW = maxW + padX * 2;
       const boxH = lines.length * lineH + padY * 2;
+
+      // Optional arrow extending from text label to dragged target point
+      if (item.targetX !== undefined && item.targetY !== undefined) {
+        const cx = item.x + boxW / 2;
+        const cy = item.y + boxH / 2;
+        const dist = Math.hypot(item.targetX - cx, item.targetY - cy);
+        if (dist > 14) {
+          const angle = Math.atan2(item.targetY - cy, item.targetX - cx);
+          const headLen = Math.max(12, item.strokeWidth * 3.4);
+          const ex = item.targetX - Math.cos(angle) * (headLen * 0.65);
+          const ey = item.targetY - Math.sin(angle) * (headLen * 0.65);
+
+          ctx.strokeStyle = item.color;
+          ctx.lineWidth = Math.max(2.5, item.strokeWidth * 0.85);
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+          drawArrowHead(ctx, item.targetX, item.targetY, angle, headLen, item.color);
+        }
+      }
 
       if (item.variant === 'callout' && item.tailX !== undefined && item.tailY !== undefined) {
         const cx = item.x + boxW / 2;
@@ -441,7 +464,22 @@ function drawAnnotationItem(
         ctx.fill();
       }
 
-      if (item.variant === 'pill' || item.variant === 'callout') {
+      if (item.variant === 'border') {
+        drawRoundedRectPath(ctx, item.x, item.y, boxW, boxH, 8);
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+        ctx.fill();
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = Math.max(2, Math.min(3.5, item.strokeWidth * 0.65));
+        if (isPlaceholder) ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = isPlaceholder ? 'rgba(248, 250, 252, 0.45)' : '#f8fafc';
+        ctx.textBaseline = 'top';
+        lines.forEach((line, idx) => {
+          ctx.fillText(line, item.x + padX, item.y + padY + idx * lineH);
+        });
+      } else if (item.variant === 'pill' || item.variant === 'callout') {
         drawRoundedRectPath(ctx, item.x, item.y, boxW, boxH, 8);
         ctx.fillStyle = item.color;
         ctx.fill();
@@ -449,7 +487,11 @@ function drawAnnotationItem(
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        ctx.fillStyle = item.color === '#f8fafc' || item.color === '#eab308' ? '#0f172a' : '#ffffff';
+        ctx.fillStyle = isPlaceholder
+          ? 'rgba(255,255,255,0.55)'
+          : item.color === '#f8fafc' || item.color === '#eab308'
+            ? '#0f172a'
+            : '#ffffff';
         ctx.textBaseline = 'top';
         lines.forEach((line, idx) => {
           ctx.fillText(line, item.x + padX, item.y + padY + idx * lineH);
@@ -459,7 +501,7 @@ function drawAnnotationItem(
         ctx.lineJoin = 'round';
         ctx.lineWidth = Math.max(4, item.fontSize * 0.22);
         ctx.strokeStyle = item.color === '#0f172a' ? '#ffffff' : '#0f172a';
-        ctx.fillStyle = item.color;
+        ctx.fillStyle = isPlaceholder ? 'rgba(248,250,252,0.5)' : item.color;
         lines.forEach((line, idx) => {
           const ty = item.y + padY + idx * lineH;
           ctx.strokeText(line, item.x + padX, ty);

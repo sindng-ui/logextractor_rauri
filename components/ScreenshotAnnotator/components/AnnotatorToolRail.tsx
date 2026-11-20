@@ -29,7 +29,7 @@ const TOOL_ITEMS: ToolEntry[] = [
   { id: 'ellipse', label: 'Ellipse', shortcut: '2', icon: Circle, group: 'draw' },
   { id: 'arrow', label: 'Arrow (Straight / Curved)', shortcut: '3', icon: ArrowUpRight, group: 'draw' },
   { id: 'step', label: 'Step Badge (Click=Badge, Drag=+Arrow)', shortcut: '4', icon: ListOrdered, group: 'draw' },
-  { id: 'text', label: 'Text / Callout', shortcut: '5', icon: Type, group: 'draw' },
+  { id: 'text', label: 'Text Label (Click=Text, Drag=+Arrow)', shortcut: '5', icon: Type, group: 'draw' },
   { id: 'highlighter', label: 'Highlighter', shortcut: '6', icon: Highlighter, group: 'draw' },
   { id: 'mosaic', label: 'Mosaic / Redact', shortcut: '7', icon: Grid2x2, group: 'draw' },
   { id: 'freehand', label: 'Freehand Pen', shortcut: '8', icon: Pencil, group: 'draw' },

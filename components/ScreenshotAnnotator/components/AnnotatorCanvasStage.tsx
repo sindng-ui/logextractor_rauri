@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AnnotatorTool, Point } from '../../../types/screenshotAnnotator';
+import { CURSOR_OPEN_CROSSHAIR } from '../../../utils/annotatorDraftFactory';
 import { InlineTextEditState } from '../hooks/useAnnotatorCanvasInteraction';
 
 interface AnnotatorCanvasStageProps {
@@ -26,7 +27,7 @@ const TOOL_HINTS: Record<AnnotatorTool, string> = {
   ellipse: 'Drag to draw ellipse · Hold Shift for perfect circle',
   arrow: 'Drag to draw arrow · Hold Shift for 45° snap · Switch to Select to bend curve handle',
   step: 'Click for numbered badge ① · Drag from badge to attach arrow',
-  text: 'Click anywhere to type · Enter to commit · Shift+Enter for new line',
+  text: 'Click for text label · Drag from label to attach arrow · Enter to commit',
   highlighter: 'Drag to highlight text · Hold Shift for straight horizontal highlight',
   mosaic: 'Drag over sensitive data (tokens, IPs, emails) to pixelate or redact',
   freehand: 'Drag to sketch freely · Hold Shift for straight horizontal/vertical line',
@@ -67,15 +68,14 @@ const AnnotatorCanvasStage: React.FC<AnnotatorCanvasStageProps> = ({
 
   const textOffset = editingText ? imagePointToClientOffset({ x: editingText.x, y: editingText.y }) : null;
 
+  const usePrecisionCrosshair = !isSpaceHeld && !isDuplicateCursor && tool !== 'select';
   const cursorClass = isSpaceHeld
     ? 'cursor-grab active:cursor-grabbing'
     : isDuplicateCursor
     ? 'cursor-copy'
     : tool === 'select'
     ? 'cursor-default'
-    : tool === 'text'
-    ? 'cursor-text'
-    : 'cursor-crosshair';
+    : '';
 
   return (
     <div className="relative flex-1 min-w-0 min-h-0 flex flex-col bg-[#080d1a]">
@@ -93,6 +93,7 @@ const AnnotatorCanvasStage: React.FC<AnnotatorCanvasStageProps> = ({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onDoubleClick={onDoubleClick}
+          style={usePrecisionCrosshair ? { cursor: CURSOR_OPEN_CROSSHAIR } : undefined}
           className={`w-full h-full block touch-none ${cursorClass}`}
         />
 

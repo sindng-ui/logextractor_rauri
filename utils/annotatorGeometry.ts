@@ -239,10 +239,10 @@ export function computeDocumentLayout(doc: AnnotatorDocument): DocumentLayout {
 export function estimateTextBounds(
   item: Extract<AnnotationItem, { type: 'text' }>
 ): RectBox {
-  const lines = (item.text || ' ').split('\n');
+  const lines = (item.text || 'Text').split('\n');
   const maxChars = Math.max(1, ...lines.map((l) => l.length));
-  const padX = item.variant === 'outline' ? 6 : 12;
-  const padY = item.variant === 'outline' ? 4 : 8;
+  const padX = item.variant === 'outline' ? 6 : item.variant === 'border' ? 10 : 12;
+  const padY = item.variant === 'outline' ? 4 : item.variant === 'border' ? 5 : 8;
   const lineH = Math.round(item.fontSize * 1.32);
   const approxCharW = item.fontSize * 0.62;
   const w = Math.max(36, Math.round(maxChars * approxCharW + padX * 2));
@@ -273,8 +273,17 @@ export function getAnnotationBounds(item: AnnotationItem): RectBox {
       const minY = Math.min(...ys);
       return { x: minX, y: minY, w: Math.max(...xs) - minX, h: Math.max(...ys) - minY };
     }
-    case 'text':
-      return estimateTextBounds(item);
+    case 'text': {
+      const b = estimateTextBounds(item);
+      if (item.targetX !== undefined && item.targetY !== undefined) {
+        const minX = Math.min(b.x, item.targetX);
+        const minY = Math.min(b.y, item.targetY);
+        const maxX = Math.max(b.x + b.w, item.targetX);
+        const maxY = Math.max(b.y + b.h, item.targetY);
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      }
+      return b;
+    }
     case 'highlighter':
     case 'freehand': {
       if (item.points.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
@@ -369,7 +378,14 @@ export function hitTestSingleAnnotation(item: AnnotationItem, pt: Point, tol = 8
     }
     case 'text': {
       const b = estimateTextBounds(item);
-      return pt.x >= b.x - tol && pt.x <= b.x + b.w + tol && pt.y >= b.y - tol && pt.y <= b.y + b.h + tol;
+      if (pt.x >= b.x - tol && pt.x <= b.x + b.w + tol && pt.y >= b.y - tol && pt.y <= b.y + b.h + tol) {
+        return true;
+      }
+      if (item.targetX !== undefined && item.targetY !== undefined) {
+        const center = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+        return distToSegment(pt, center, { x: item.targetX, y: item.targetY }) <= tol + 4;
+      }
+      return false;
     }
     case 'highlighter':
     case 'freehand': {
@@ -419,10 +435,14 @@ export function getAnnotationHandles(item: AnnotationItem): HandleDescriptor[] {
     return [];
   }
   if (item.type === 'text') {
-    if (item.variant === 'callout' && item.tailX !== undefined && item.tailY !== undefined) {
-      return [{ id: 'tail', x: item.tailX, y: item.tailY, shape: 'diamond' }];
+    const handles: HandleDescriptor[] = [];
+    if (item.targetX !== undefined && item.targetY !== undefined) {
+      handles.push({ id: 'end', x: item.targetX, y: item.targetY, shape: 'square' });
     }
-    return [];
+    if (item.variant === 'callout' && item.tailX !== undefined && item.tailY !== undefined) {
+      handles.push({ id: 'tail', x: item.tailX, y: item.tailY, shape: 'diamond' });
+    }
+    return handles;
   }
   if (
     item.type === 'rect' ||
@@ -513,6 +533,8 @@ export function translateAnnotation(item: AnnotationItem, dx: number, dy: number
         y: item.y + dy,
         tailX: item.tailX !== undefined ? item.tailX + dx : undefined,
         tailY: item.tailY !== undefined ? item.tailY + dy : undefined,
+        targetX: item.targetX !== undefined ? item.targetX + dx : undefined,
+        targetY: item.targetY !== undefined ? item.targetY + dy : undefined,
       };
     case 'highlighter':
     case 'freehand':
@@ -548,6 +570,12 @@ export function applyHandleResize(
   }
   if (item.type === 'text' && handle === 'tail') {
     return { ...item, tailX: pt.x, tailY: pt.y };
+  }
+  if (item.type === 'text' && handle === 'end') {
+    const b = estimateTextBounds(item);
+    const origin = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    const next = shiftKey ? snapAnglePoint(origin, pt) : pt;
+    return { ...item, targetX: next.x, targetY: next.y };
   }
   if (
     item.type === 'rect' ||

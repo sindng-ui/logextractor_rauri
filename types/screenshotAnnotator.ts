@@ -24,7 +24,7 @@ export interface RectBox {
   h: number;
 }
 
-export type TextVariant = 'pill' | 'outline' | 'callout';
+export type TextVariant = 'border' | 'pill' | 'outline' | 'callout';
 export type MosaicMode = 'pixelate' | 'solid';
 export type CutoutStyle = 'zigzag' | 'wave' | 'gap';
 export type StitchMode = 'replace' | 'right' | 'below' | 'overlay';
@@ -86,6 +86,9 @@ export interface TextAnnotation extends BaseAnnotation {
   variant: TextVariant;
   tailX?: number;
   tailY?: number;
+  /** Optional arrow pointer tip when user drags from text label to target */
+  targetX?: number;
+  targetY?: number;
 }
 
 export interface HighlighterAnnotation extends BaseAnnotation {
@@ -255,8 +258,8 @@ export const DEFAULT_STYLE_STATE: AnnotatorStyleState = {
   strokeWidth: 4,
   fillOpacity: 0,
   arrowCurved: false,
-  textVariant: 'pill',
-  fontSize: 18,
+  textVariant: 'border',
+  fontSize: 16,
   mosaicMode: 'pixelate',
   mosaicBlockSize: 14,
   spotlightShape: 'rect',

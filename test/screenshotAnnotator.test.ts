@@ -159,6 +159,27 @@ describe('annotatorGeometry', () => {
     expect(clonedRect.type === 'rect' && clonedRect.x === 100 && clonedRect.w === 200).toBe(true);
     const clonedStep = cloneAnnotation(step, 's-copy', 2);
     expect(clonedStep.type === 'step' && clonedStep.id === 's-copy' && clonedStep.number === 2).toBe(true);
+
+    // Bordered text label + attached arrow hit-test, handle move, and translation
+    const labeledArrow: AnnotationItem = {
+      id: 't1',
+      type: 'text',
+      x: 50,
+      y: 50,
+      text: 'Retry API',
+      fontSize: 16,
+      variant: 'border',
+      color: '#ef4444',
+      strokeWidth: 4,
+      targetX: 220,
+      targetY: 160,
+    };
+    expect(hitTestAnnotations([labeledArrow], { x: 200, y: 147 })?.id).toBe('t1');
+    expect(hitTestHandle(labeledArrow, { x: 220, y: 160 })).toBe('end');
+    const retargeted = applyHandleResize(labeledArrow, 'end', { x: 300, y: 200 }, false);
+    expect(retargeted.type === 'text' && retargeted.targetX === 300 && retargeted.targetY === 200).toBe(true);
+    const movedLabel = translateAnnotation(labeledArrow, 10, 20);
+    expect(movedLabel.type === 'text' && movedLabel.x === 60 && movedLabel.targetY === 180).toBe(true);
   });
 });
 
