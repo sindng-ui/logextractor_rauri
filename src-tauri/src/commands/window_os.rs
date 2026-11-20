@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::fs;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{
+    ipc::{InvokeBody, Request, Response},
+    AppHandle, Manager, WebviewWindow,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WindowState {
@@ -80,6 +84,82 @@ pub async fn copy_to_clipboard(text: String) -> Result<Value, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Zero-copy raw binary image copy to OS clipboard.
+/// Payload layout: [width: u32 LE][height: u32 LE][RGBA bytes...]
+#[tauri::command]
+pub async fn copy_image_to_clipboard(request: Request<'_>) -> Result<Value, String> {
+    let raw = match request.body() {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(_) => {
+            return Err("Expected raw binary payload for copy_image_to_clipboard".to_string())
+        }
+    };
+
+    if raw.len() < 8 {
+        return Err("Invalid image clipboard payload header".to_string());
+    }
+
+    let width = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+    let height = u32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]]) as usize;
+    let expected_len = width
+        .checked_mul(height)
+        .and_then(|px| px.checked_mul(4))
+        .ok_or_else(|| "Image dimensions overflow".to_string())?;
+
+    if width == 0 || height == 0 || raw.len() < 8 + expected_len {
+        return Err(format!(
+            "Invalid RGBA payload length: got {}, expected {}",
+            raw.len().saturating_sub(8),
+            expected_len
+        ));
+    }
+
+    let rgba = raw[8..8 + expected_len].to_vec();
+    tokio::task::spawn_blocking(move || {
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("Clipboard init failed: {}", e))?;
+        clipboard
+            .set_image(arboard::ImageData {
+                width,
+                height,
+                bytes: Cow::Owned(rgba),
+            })
+            .map_err(|e| format!("Clipboard set_image failed: {}", e))?;
+        Ok(json!({ "status": "success" }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Zero-copy raw binary image read from OS clipboard.
+/// Returns empty Response if clipboard does not contain an image, otherwise
+/// [width: u32 LE][height: u32 LE][RGBA bytes...].
+#[tauri::command]
+pub async fn read_image_from_clipboard() -> Result<Response, String> {
+    let payload = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let mut clipboard = match arboard::Clipboard::new() {
+            Ok(cb) => cb,
+            Err(_) => return Ok(Vec::new()),
+        };
+        match clipboard.get_image() {
+            Ok(img) => {
+                let w = img.width as u32;
+                let h = img.height as u32;
+                let mut out = Vec::with_capacity(8 + img.bytes.len());
+                out.extend_from_slice(&w.to_le_bytes());
+                out.extend_from_slice(&h.to_le_bytes());
+                out.extend_from_slice(&img.bytes);
+                Ok(out)
+            }
+            Err(_) => Ok(Vec::new()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    Ok(Response::new(payload))
 }
 
 #[tauri::command]

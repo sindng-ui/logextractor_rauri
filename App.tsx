@@ -42,7 +42,7 @@ const CommandRegistrar: React.FC<{
       section: 'Tools',
       icon: <LayoutGrid size={18} />,
       action: () => setIsAppsLauncherOpen(true),
-      keywords: ['apps', 'json', 'beautify', 'tools', 'launcher']
+      keywords: ['apps', 'json', 'beautify', 'snap', 'screenshot', 'annotator', 'tools', 'launcher']
     });
 
     registerCommand({

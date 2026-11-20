@@ -33,6 +33,16 @@ interface ElectronAPI {
     setZoomFactor: (factor: number) => void;
     getZoomFactor: () => number;
     copyToClipboard: (text: string) => Promise<void>;
+    copyImageToClipboard?: (
+        width: number,
+        height: number,
+        rgba: Uint8ClampedArray | Uint8Array
+    ) => Promise<{ status: string; error?: string }>;
+    readImageFromClipboard?: () => Promise<{
+        width: number;
+        height: number;
+        rgba: Uint8ClampedArray;
+    } | null>;
     saveFile: (content: string) => Promise<{ status: string, filePath?: string }>;
     saveBinaryFile?: (
         data: Uint8Array,

@@ -159,6 +159,8 @@ pub fn run() {
             log_reader::read_local_line_range,
             log_reader::find_highlight_native,
             window_os::copy_to_clipboard,
+            window_os::copy_image_to_clipboard,
+            window_os::read_image_from_clipboard,
             window_os::open_external,
             window_os::get_app_path,
             window_os::toggle_fullscreen,

@@ -337,6 +337,47 @@ export function createTauriElectronAPI() {
             return { status: 'success' };
         },
 
+        copyImageToClipboard: async (
+            width: number,
+            height: number,
+            rgba: Uint8ClampedArray | Uint8Array
+        ): Promise<{ status: string; error?: string }> => {
+            if (isTauriEnvironment()) {
+                const payload = new Uint8Array(8 + rgba.byteLength);
+                const view = new DataView(payload.buffer);
+                view.setUint32(0, width, true);
+                view.setUint32(4, height, true);
+                payload.set(new Uint8Array(rgba.buffer, rgba.byteOffset, rgba.byteLength), 8);
+                return await invoke<{ status: string; error?: string }>(
+                    'copy_image_to_clipboard',
+                    payload
+                );
+            }
+            return { status: 'fallback' };
+        },
+
+        readImageFromClipboard: async (): Promise<{
+            width: number;
+            height: number;
+            rgba: Uint8ClampedArray;
+        } | null> => {
+            if (!isTauriEnvironment()) return null;
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>(
+                'read_image_from_clipboard'
+            );
+            const bytes = toUint8Array(raw);
+            if (bytes.byteLength < 8) return null;
+            const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+            const width = view.getUint32(0, true);
+            const height = view.getUint32(4, true);
+            const expected = width * height * 4;
+            if (width === 0 || height === 0 || bytes.byteLength < 8 + expected) return null;
+            const rgba = new Uint8ClampedArray(
+                bytes.buffer.slice(bytes.byteOffset + 8, bytes.byteOffset + 8 + expected)
+            );
+            return { width, height, rgba };
+        },
+
         saveFile: async (content: string) => {
             return await invoke('save_file', { content });
         },
