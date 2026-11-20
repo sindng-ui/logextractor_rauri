@@ -6,7 +6,9 @@ import {
   Point,
 } from '../types/screenshotAnnotator';
 import {
+  measureTextLayout,
   normalizeRect,
+  positionTextBoxForArrowStart,
   simplifyPoints,
   snapAnglePoint,
   snapAxisPoint,
@@ -94,8 +96,8 @@ export function createDraftAnnotation(
         color: style.color,
         strokeWidth: style.strokeWidth,
       };
-    case 'text':
-      return {
+    case 'text': {
+      const baseText: Extract<AnnotationItem, { type: 'text' }> = {
         id,
         type: 'text',
         x: pt.x,
@@ -106,6 +108,10 @@ export function createDraftAnnotation(
         fontSize: style.fontSize,
         variant: style.textVariant,
       };
+      const box = measureTextLayout(baseText).box;
+      const pos = positionTextBoxForArrowStart(box.w, box.h, pt, null);
+      return { ...baseText, x: pos.x, y: pos.y };
+    }
     case 'highlighter':
       return {
         id,
@@ -184,14 +190,24 @@ export function updateDraftAnnotation(
         cy: draft.curved ? midY + dx * 0.22 : undefined,
       };
     }
-    case 'step':
-    case 'text': {
+    case 'step': {
       const dist = Math.hypot(pt.x - start.x, pt.y - start.y);
       if (dist > 14) {
         const target = shiftKey ? snapAnglePoint(start, pt) : pt;
         return { ...draft, targetX: target.x, targetY: target.y };
       }
       return { ...draft, targetX: undefined, targetY: undefined };
+    }
+    case 'text': {
+      const dist = Math.hypot(pt.x - start.x, pt.y - start.y);
+      const box = measureTextLayout(draft).box;
+      if (dist > 14) {
+        const target = shiftKey ? snapAnglePoint(start, pt) : pt;
+        const pos = positionTextBoxForArrowStart(box.w, box.h, start, target);
+        return { ...draft, x: pos.x, y: pos.y, targetX: target.x, targetY: target.y };
+      }
+      const pos = positionTextBoxForArrowStart(box.w, box.h, start, null);
+      return { ...draft, x: pos.x, y: pos.y, targetX: undefined, targetY: undefined };
     }
     case 'highlighter': {
       if (shiftKey) {

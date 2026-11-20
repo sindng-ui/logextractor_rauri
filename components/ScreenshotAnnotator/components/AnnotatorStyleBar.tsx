@@ -167,7 +167,7 @@ const AnnotatorStyleBar: React.FC<AnnotatorStyleBarProps> = ({
         {effectiveTool === 'text' && (
           <div className="flex items-center gap-2">
             <div className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]">
-              {(['border', 'pill', 'outline', 'callout'] as TextVariant[]).map((v) => (
+              {(['border', 'pill', 'outline'] as TextVariant[]).map((v) => (
                 <button
                   key={v}
                   type="button"

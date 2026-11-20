@@ -24,7 +24,7 @@ export interface RectBox {
   h: number;
 }
 
-export type TextVariant = 'border' | 'pill' | 'outline' | 'callout';
+export type TextVariant = 'border' | 'pill' | 'outline';
 export type MosaicMode = 'pixelate' | 'solid';
 export type CutoutStyle = 'zigzag' | 'wave' | 'gap';
 export type StitchMode = 'replace' | 'right' | 'below' | 'overlay';
@@ -84,8 +84,6 @@ export interface TextAnnotation extends BaseAnnotation {
   text: string;
   fontSize: number;
   variant: TextVariant;
-  tailX?: number;
-  tailY?: number;
   /** Optional arrow pointer tip when user drags from text label to target */
   targetX?: number;
   targetY?: number;

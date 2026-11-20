@@ -4,10 +4,13 @@ import {
   cloneAnnotation,
   computeCutoutLayout,
   computeDocumentLayout,
+  computeTextArrowStart,
   hitTestAnnotations,
   hitTestHandle,
   mapCollapsedToSource,
+  measureTextLayout,
   normalizeRect,
+  positionTextBoxForArrowStart,
   simplifyPoints,
   snapAnglePoint,
   snapAxisPoint,
@@ -27,6 +30,12 @@ import {
   MAX_ANNOTATOR_HISTORY,
   saveAnnotatorHistoryEntry,
 } from '../utils/annotatorHistoryStorage';
+import {
+  ANNOTATOR_PREFS_STORAGE_KEY,
+  getDefaultAnnotatorPreferences,
+  loadAnnotatorPreferences,
+  saveAnnotatorPreferences,
+} from '../utils/annotatorPreferences';
 
 function makeDoc(partial?: Partial<AnnotatorDocument>): AnnotatorDocument {
   return {
@@ -181,6 +190,97 @@ describe('annotatorGeometry', () => {
     const movedLabel = translateAnnotation(labeledArrow, 10, 20);
     expect(movedLabel.type === 'text' && movedLabel.x === 60 && movedLabel.targetY === 180).toBe(true);
   });
+
+  it('locks text position and arrow angle across border/pill/outline modes with zero outline overlap', () => {
+    const baseText: Extract<AnnotationItem, { type: 'text' }> = {
+      id: 'tp1',
+      type: 'text',
+      x: 200,
+      y: 100,
+      text: 'text',
+      fontSize: 26,
+      variant: 'border',
+      color: '#ef4444',
+      strokeWidth: 4,
+      targetX: 80,
+      targetY: 220,
+    };
+    const fakeCtx = {
+      font: '',
+      textAlign: 'left',
+      textBaseline: 'alphabetic',
+      measureText: () => ({
+        width: 48,
+        actualBoundingBoxLeft: 24,
+        actualBoundingBoxRight: 24,
+        actualBoundingBoxAscent: 13.5,
+        actualBoundingBoxDescent: 5.5,
+      }),
+    } as unknown as CanvasRenderingContext2D;
+
+    const borderLayout = measureTextLayout({ ...baseText, variant: 'border' }, fakeCtx);
+    const pillLayout = measureTextLayout({ ...baseText, variant: 'pill' }, fakeCtx);
+    const outlineLayout = measureTextLayout({ ...baseText, variant: 'outline' }, fakeCtx);
+
+    // 1. Sub-pixel vertical & horizontal centering
+    const topGap = (borderLayout.firstDrawY - 13.5) - borderLayout.box.y;
+    const bottomGap = (borderLayout.box.y + borderLayout.box.h) - (borderLayout.firstDrawY + 5.5);
+    expect(Math.abs(topGap - bottomGap)).toBeLessThan(0.01);
+    expect(borderLayout.centerX).toBe(borderLayout.box.x + borderLayout.box.w / 2);
+
+    // 2. Switching between border / pill / outline never moves text or changes box geometry
+    expect(pillLayout.box).toEqual(borderLayout.box);
+    expect(outlineLayout.box).toEqual(borderLayout.box);
+    expect(pillLayout.centerX).toBe(borderLayout.centerX);
+    expect(outlineLayout.centerX).toBe(borderLayout.centerX);
+    expect(pillLayout.firstDrawY).toBe(borderLayout.firstDrawY);
+    expect(outlineLayout.firstDrawY).toBe(borderLayout.firstDrawY);
+
+    // 3. Arrow angle & start anchor stay bit-for-bit identical across all 3 variants
+    const aBorder = computeTextArrowStart(borderLayout.box, 80, 220);
+    const aPill = computeTextArrowStart(pillLayout.box, 80, 220);
+    const aOutline = computeTextArrowStart(outlineLayout.box, 80, 220);
+    expect(aBorder).not.toBeNull();
+    expect(aPill).toEqual(aBorder);
+    expect(aOutline).toEqual(aBorder);
+
+    // 4. Arrow start always stays strictly outside glyph ink + outline stroke halo in all directions
+    const haloHalf = Math.max(4, baseText.fontSize * 0.22) / 2;
+    const inkMinX = outlineLayout.centerX - 24 - haloHalf;
+    const inkMaxX = outlineLayout.centerX + 24 + haloHalf;
+    const inkMinY = outlineLayout.firstDrawY - 13.5 - haloHalf;
+    const inkMaxY = outlineLayout.firstDrawY + 5.5 + haloHalf;
+    const cx = outlineLayout.box.x + outlineLayout.box.w / 2;
+    const cy = outlineLayout.box.y + outlineLayout.box.h / 2;
+    const targets = [
+      { x: 50, y: cy },
+      { x: 400, y: cy },
+      { x: cx, y: 10 },
+      { x: cx, y: 260 },
+      { x: 80, y: 220 },
+      { x: 360, y: 20 },
+    ];
+    for (const t of targets) {
+      const attach = computeTextArrowStart(outlineLayout.box, t.x, t.y);
+      expect(attach).not.toBeNull();
+      const overlapsGlyph =
+        attach!.startX >= inkMinX &&
+        attach!.startX <= inkMaxX &&
+        attach!.startY >= inkMinY &&
+        attach!.startY <= inkMaxY;
+      expect(overlapsGlyph).toBe(false);
+    }
+
+    // 5. Anchoring text box from clicked arrow start keeps arrow origin locked at clicked anchor
+    const anchor = { x: 300, y: 200 };
+    const dragTarget = { x: 140, y: 310 };
+    const pos = positionTextBoxForArrowStart(120, 34, anchor, dragTarget);
+    const anchoredAttach = computeTextArrowStart({ x: pos.x, y: pos.y, w: 120, h: 34 }, dragTarget.x, dragTarget.y);
+    expect(anchoredAttach).not.toBeNull();
+    expect(Math.abs(anchoredAttach!.startX - anchor.x)).toBeLessThan(0.01);
+    expect(Math.abs(anchoredAttach!.startY - anchor.y)).toBeLessThan(0.01);
+    expect(Math.abs(anchoredAttach!.angle - Math.atan2(dragTarget.y - anchor.y, dragTarget.x - anchor.x))).toBeLessThan(0.001);
+  });
 });
 
 describe('annotatorHistoryStorage', () => {
@@ -236,5 +336,48 @@ describe('annotatorHistoryStorage', () => {
     // Delete single item
     const afterDelete = await deleteAnnotatorHistoryEntry(meta[0].id);
     expect(afterDelete).toHaveLength(MAX_ANNOTATOR_HISTORY - 1);
+  });
+});
+
+describe('annotatorPreferences', () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(ANNOTATOR_PREFS_STORAGE_KEY);
+  });
+
+  it('persists and restores tool, style, frame, and spotlight preferences safely', () => {
+    const defaults = getDefaultAnnotatorPreferences();
+    expect(loadAnnotatorPreferences()).toEqual(defaults);
+
+    const custom = {
+      tool: 'text' as const,
+      style: {
+        ...defaults.style,
+        color: '#22c55e',
+        fontSize: 26,
+        textVariant: 'pill' as const,
+        strokeWidth: 6,
+      },
+      frameConfig: {
+        ...defaults.frameConfig,
+        enabled: true,
+        presetId: 'ocean-slate',
+        padding: 56,
+      },
+      spotlightConfig: {
+        dimOpacity: 0.72,
+      },
+    };
+    saveAnnotatorPreferences(custom);
+    expect(loadAnnotatorPreferences()).toEqual(custom);
+
+    // Falls back gracefully for deprecated variants or corrupted JSON
+    window.localStorage.setItem(
+      ANNOTATOR_PREFS_STORAGE_KEY,
+      JSON.stringify({ tool: 'invalid-tool', style: { textVariant: 'callout', fontSize: 20 } })
+    );
+    const sanitized = loadAnnotatorPreferences();
+    expect(sanitized.tool).toBe(defaults.tool);
+    expect(sanitized.style.textVariant).toBe('border');
+    expect(sanitized.style.fontSize).toBe(20);
   });
 });

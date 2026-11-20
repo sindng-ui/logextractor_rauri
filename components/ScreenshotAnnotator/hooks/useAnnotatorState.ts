@@ -21,6 +21,10 @@ import {
   saveAnnotatorHistoryEntry,
 } from '../../../utils/annotatorHistoryStorage';
 import {
+  loadAnnotatorPreferences,
+  saveAnnotatorPreferences,
+} from '../../../utils/annotatorPreferences';
+import {
   createThumbnailDataUrl,
   renderDocumentToExportCanvas,
 } from '../../../utils/annotatorImageOps';
@@ -31,7 +35,9 @@ const MAX_UNDO_DEPTH = 50;
 export function createEmptyDocument(
   baseDataUrl: string,
   width: number,
-  height: number
+  height: number,
+  frameConfig: FrameConfig = DEFAULT_FRAME_CONFIG,
+  spotlightConfig: SpotlightConfig = DEFAULT_SPOTLIGHT_CONFIG
 ): AnnotatorDocument {
   return {
     baseDataUrl,
@@ -40,8 +46,8 @@ export function createEmptyDocument(
     annotations: [],
     cutouts: [],
     cropRect: null,
-    frameConfig: { ...DEFAULT_FRAME_CONFIG },
-    spotlightConfig: { ...DEFAULT_SPOTLIGHT_CONFIG },
+    frameConfig: { ...frameConfig },
+    spotlightConfig: { ...spotlightConfig },
     nextStepNumber: 1,
   };
 }
@@ -56,8 +62,19 @@ export function useAnnotatorState(
   const [undoStack, setUndoStack] = useState<AnnotatorDocument[]>([]);
   const [redoStack, setRedoStack] = useState<AnnotatorDocument[]>([]);
 
-  const [tool, setTool] = useState<AnnotatorTool>('arrow');
-  const [style, setStyle] = useState<AnnotatorStyleState>(DEFAULT_STYLE_STATE);
+  const initialPrefsRef = useRef<ReturnType<typeof loadAnnotatorPreferences> | null>(null);
+  if (initialPrefsRef.current === null) {
+    initialPrefsRef.current = loadAnnotatorPreferences();
+  }
+
+  const [tool, setTool] = useState<AnnotatorTool>(initialPrefsRef.current.tool);
+  const [style, setStyle] = useState<AnnotatorStyleState>(initialPrefsRef.current.style);
+  const [savedFrameConfig, setSavedFrameConfig] = useState<FrameConfig>(
+    initialPrefsRef.current.frameConfig
+  );
+  const [savedSpotlightConfig, setSavedSpotlightConfig] = useState<SpotlightConfig>(
+    initialPrefsRef.current.spotlightConfig
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [historyMeta, setHistoryMeta] = useState<AnnotatorHistoryMeta[]>([]);
   const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
@@ -68,8 +85,47 @@ export function useAnnotatorState(
   docIdRef.current = docId;
   const docTitleRef = useRef<string>(docTitle);
   docTitleRef.current = docTitle;
+  const prefsSnapshotRef = useRef({
+    tool,
+    style,
+    frameConfig: savedFrameConfig,
+    spotlightConfig: savedSpotlightConfig,
+  });
+  prefsSnapshotRef.current = {
+    tool,
+    style,
+    frameConfig: savedFrameConfig,
+    spotlightConfig: savedSpotlightConfig,
+  };
+  const prefsDidMountRef = useRef(false);
+  const prefsSaveTimerRef = useRef<number | null>(null);
 
   const autoSaveTimerRef = useRef<number | null>(null);
+
+  // Persist user preferences (tool, style, frame, spotlight) with 250ms debounce & flush on unmount
+  useEffect(() => {
+    if (!prefsDidMountRef.current) {
+      prefsDidMountRef.current = true;
+      return;
+    }
+    if (prefsSaveTimerRef.current !== null) {
+      window.clearTimeout(prefsSaveTimerRef.current);
+    }
+    prefsSaveTimerRef.current = window.setTimeout(() => {
+      prefsSaveTimerRef.current = null;
+      saveAnnotatorPreferences(prefsSnapshotRef.current);
+    }, 250);
+  }, [tool, style, savedFrameConfig, savedSpotlightConfig]);
+
+  useEffect(() => {
+    return () => {
+      if (prefsSaveTimerRef.current !== null) {
+        window.clearTimeout(prefsSaveTimerRef.current);
+        prefsSaveTimerRef.current = null;
+        saveAnnotatorPreferences(prefsSnapshotRef.current);
+      }
+    };
+  }, []);
 
   // Hydrate lightweight history metadata once on mount
   useEffect(() => {
@@ -162,7 +218,13 @@ export function useAnnotatorState(
       const now = new Date();
       const timeTag = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
       const nextTitle = title || `Capture ${timeTag}`;
-      const nextDoc = createEmptyDocument(baseDataUrl, width, height);
+      const nextDoc = createEmptyDocument(
+        baseDataUrl,
+        width,
+        height,
+        prefsSnapshotRef.current.frameConfig,
+        prefsSnapshotRef.current.spotlightConfig
+      );
 
       setDocId(nextId);
       setDocTitle(nextTitle);
@@ -289,6 +351,7 @@ export function useAnnotatorState(
 
   const updateFrameConfig = useCallback(
     (patch: Partial<FrameConfig>) => {
+      setSavedFrameConfig((prev) => ({ ...prev, ...patch }));
       commitDocChange((prev) => ({
         ...prev,
         frameConfig: { ...prev.frameConfig, ...patch },
@@ -299,6 +362,7 @@ export function useAnnotatorState(
 
   const updateSpotlightConfig = useCallback(
     (patch: Partial<SpotlightConfig>) => {
+      setSavedSpotlightConfig((prev) => ({ ...prev, ...patch }));
       commitDocChange((prev) => ({
         ...prev,
         spotlightConfig: { ...prev.spotlightConfig, ...patch },
@@ -375,10 +439,6 @@ export function useAnnotatorState(
       }
       if (patch.textVariant !== undefined && updated.type === 'text') {
         updated.variant = patch.textVariant;
-        if (patch.textVariant === 'callout' && updated.tailX === undefined) {
-          updated.tailX = updated.x - 24;
-          updated.tailY = updated.y + 44;
-        }
       }
       if (patch.fontSize !== undefined && updated.type === 'text') {
         updated.fontSize = patch.fontSize;

@@ -7,10 +7,12 @@ import {
 } from '../types/screenshotAnnotator';
 import {
   computeDocumentLayout,
+  computeTextArrowStart,
   DocumentLayout,
   estimateTextBounds,
   getAnnotationBounds,
   getAnnotationHandles,
+  measureTextLayout,
 } from './annotatorGeometry';
 
 // Module-level reusable scratch canvases (zero per-frame allocation)
@@ -418,54 +420,37 @@ function drawAnnotationItem(
     }
     case 'text': {
       const isPlaceholder = !item.text;
-      const lines = (item.text || 'Text').split('\n');
-      ctx.font = `700 ${item.fontSize}px "Segoe UI", system-ui, sans-serif`;
-      const padX = item.variant === 'outline' ? 6 : item.variant === 'border' ? 10 : 12;
-      const padY = item.variant === 'outline' ? 4 : item.variant === 'border' ? 5 : 8;
-      const lineH = Math.round(item.fontSize * 1.32);
-      const maxW = Math.max(24, ...lines.map((l) => ctx.measureText(l).width));
-      const boxW = maxW + padX * 2;
-      const boxH = lines.length * lineH + padY * 2;
+      const layout = measureTextLayout(item, ctx);
+      const { box, lines, font, lineStep, centerX, firstDrawY, horizontalBias } = layout;
 
-      // Optional arrow extending from text label to dragged target point
+      // Optional arrow starting cleanly from unified outer rounded boundary
       if (item.targetX !== undefined && item.targetY !== undefined) {
-        const cx = item.x + boxW / 2;
-        const cy = item.y + boxH / 2;
-        const dist = Math.hypot(item.targetX - cx, item.targetY - cy);
-        if (dist > 14) {
-          const angle = Math.atan2(item.targetY - cy, item.targetX - cx);
+        const attach = computeTextArrowStart(box, item.targetX, item.targetY);
+        if (attach && attach.dist > attach.tExit + 6) {
           const headLen = Math.max(12, item.strokeWidth * 3.4);
-          const ex = item.targetX - Math.cos(angle) * (headLen * 0.65);
-          const ey = item.targetY - Math.sin(angle) * (headLen * 0.65);
-
-          ctx.strokeStyle = item.color;
-          ctx.lineWidth = Math.max(2.5, item.strokeWidth * 0.85);
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.moveTo(cx, cy);
-          ctx.lineTo(ex, ey);
-          ctx.stroke();
-          drawArrowHead(ctx, item.targetX, item.targetY, angle, headLen, item.color);
+          const shaftEndDist = attach.dist - headLen * 0.65;
+          if (shaftEndDist > attach.tExit + 1) {
+            const ex = item.targetX - Math.cos(attach.angle) * (headLen * 0.65);
+            const ey = item.targetY - Math.sin(attach.angle) * (headLen * 0.65);
+            ctx.strokeStyle = item.color;
+            ctx.lineWidth = Math.max(2.5, item.strokeWidth * 0.85);
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(attach.startX, attach.startY);
+            ctx.lineTo(ex, ey);
+            ctx.stroke();
+          }
+          drawArrowHead(ctx, item.targetX, item.targetY, attach.angle, headLen, item.color);
         }
       }
 
-      if (item.variant === 'callout' && item.tailX !== undefined && item.tailY !== undefined) {
-        const cx = item.x + boxW / 2;
-        const cy = item.y + boxH / 2;
-        const angle = Math.atan2(item.tailY - cy, item.tailX - cx);
-        const perp = angle + Math.PI / 2;
-        const baseHalf = Math.min(10, boxH * 0.3);
-        ctx.fillStyle = item.color;
-        ctx.beginPath();
-        ctx.moveTo(item.tailX, item.tailY);
-        ctx.lineTo(cx + Math.cos(perp) * baseHalf, cy + Math.sin(perp) * baseHalf);
-        ctx.lineTo(cx - Math.cos(perp) * baseHalf, cy - Math.sin(perp) * baseHalf);
-        ctx.closePath();
-        ctx.fill();
-      }
+      ctx.font = font;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const drawX = centerX + horizontalBias;
 
       if (item.variant === 'border') {
-        drawRoundedRectPath(ctx, item.x, item.y, boxW, boxH, 8);
+        drawRoundedRectPath(ctx, box.x, box.y, box.w, box.h, 8);
         ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
         ctx.fill();
         ctx.strokeStyle = item.color;
@@ -475,12 +460,21 @@ function drawAnnotationItem(
         ctx.setLineDash([]);
 
         ctx.fillStyle = isPlaceholder ? 'rgba(248, 250, 252, 0.45)' : '#f8fafc';
-        ctx.textBaseline = 'top';
         lines.forEach((line, idx) => {
-          ctx.fillText(line, item.x + padX, item.y + padY + idx * lineH);
+          ctx.fillText(line, drawX, firstDrawY + idx * lineStep);
         });
-      } else if (item.variant === 'pill' || item.variant === 'callout') {
-        drawRoundedRectPath(ctx, item.x, item.y, boxW, boxH, 8);
+      } else if (item.variant === 'outline') {
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = Math.max(4, item.fontSize * 0.22);
+        ctx.strokeStyle = item.color === '#0f172a' ? '#ffffff' : '#0f172a';
+        ctx.fillStyle = isPlaceholder ? 'rgba(248,250,252,0.5)' : item.color;
+        lines.forEach((line, idx) => {
+          const ty = firstDrawY + idx * lineStep;
+          ctx.strokeText(line, drawX, ty);
+          ctx.fillText(line, drawX, ty);
+        });
+      } else {
+        drawRoundedRectPath(ctx, box.x, box.y, box.w, box.h, 8);
         ctx.fillStyle = item.color;
         ctx.fill();
         ctx.strokeStyle = 'rgba(255,255,255,0.28)';
@@ -492,20 +486,8 @@ function drawAnnotationItem(
           : item.color === '#f8fafc' || item.color === '#eab308'
             ? '#0f172a'
             : '#ffffff';
-        ctx.textBaseline = 'top';
         lines.forEach((line, idx) => {
-          ctx.fillText(line, item.x + padX, item.y + padY + idx * lineH);
-        });
-      } else {
-        ctx.textBaseline = 'top';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = Math.max(4, item.fontSize * 0.22);
-        ctx.strokeStyle = item.color === '#0f172a' ? '#ffffff' : '#0f172a';
-        ctx.fillStyle = isPlaceholder ? 'rgba(248,250,252,0.5)' : item.color;
-        lines.forEach((line, idx) => {
-          const ty = item.y + padY + idx * lineH;
-          ctx.strokeText(line, item.x + padX, ty);
-          ctx.fillText(line, item.x + padX, ty);
+          ctx.fillText(line, drawX, firstDrawY + idx * lineStep);
         });
       }
       break;

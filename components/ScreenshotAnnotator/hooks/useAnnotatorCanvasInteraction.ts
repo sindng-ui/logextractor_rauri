@@ -16,7 +16,9 @@ import {
   hitTestAnnotations,
   hitTestHandle,
   mapCollapsedToSource,
+  measureTextLayout,
   normalizeRect,
+  positionTextBoxForArrowStart,
   ResizeHandleId,
   translateAnnotation,
 } from '../../../utils/annotatorGeometry';
@@ -35,6 +37,8 @@ export interface InlineTextEditState {
   id: string | null; // null = creating new text
   x: number;
   y: number;
+  anchorX?: number;
+  anchorY?: number;
   initialText: string;
   targetX?: number;
   targetY?: number;
@@ -569,6 +573,8 @@ export function useAnnotatorCanvasInteraction({
             id: null,
             x: rawItem.x,
             y: rawItem.y,
+            anchorX: mode.startPt.x,
+            anchorY: mode.startPt.y,
             initialText: '',
             targetX: rawItem.targetX,
             targetY: rawItem.targetY,
@@ -630,11 +636,19 @@ export function useAnnotatorCanvasInteraction({
         strokeWidth: style.strokeWidth,
         fontSize: style.fontSize,
         variant: style.textVariant,
-        tailX: style.textVariant === 'callout' ? edit.x - 24 : undefined,
-        tailY: style.textVariant === 'callout' ? edit.y + 44 : undefined,
         targetX: edit.targetX,
         targetY: edit.targetY,
       };
+      if (edit.anchorX !== undefined && edit.anchorY !== undefined) {
+        const box = measureTextLayout(nextText).box;
+        const target =
+          edit.targetX !== undefined && edit.targetY !== undefined
+            ? { x: edit.targetX, y: edit.targetY }
+            : null;
+        const pos = positionTextBoxForArrowStart(box.w, box.h, { x: edit.anchorX, y: edit.anchorY }, target);
+        nextText.x = pos.x;
+        nextText.y = pos.y;
+      }
       onAddAnnotation(nextText);
     },
     [editingText, onAddAnnotation, onUpdateAnnotation, style]

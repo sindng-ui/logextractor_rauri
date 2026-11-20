@@ -92,12 +92,12 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
       <div className="flex items-center gap-1.5 no-drag">
         {hasDocument && (
           <>
-            <div className="flex items-center bg-slate-950 p-0.5 rounded-xl border border-slate-800">
+            <div className="h-8 flex items-center bg-slate-950 px-0.5 rounded-xl border border-slate-800">
               <button
                 type="button"
                 onClick={onUndo}
                 disabled={!canUndo}
-                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                className="w-7 h-[26px] rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors"
                 title="Undo (Ctrl+Z)"
               >
                 <Undo2 size={14} />
@@ -106,7 +106,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
                 type="button"
                 onClick={onRedo}
                 disabled={!canRedo}
-                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                className="w-7 h-[26px] rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors"
                 title="Redo (Ctrl+Shift+Z / Ctrl+Y)"
               >
                 <Redo2 size={14} />
@@ -116,7 +116,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
             <button
               type="button"
               onClick={onToggleFramePopover}
-              className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors active:scale-95 ${
+              className={`h-8 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95 ${
                 frameEnabled || isFrameOpen
                   ? 'bg-indigo-600/90 border-indigo-400/50 text-white'
                   : 'bg-slate-800/90 hover:bg-slate-700 border-white/10 text-slate-300 hover:text-white'
@@ -132,7 +132,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
         <button
           type="button"
           onClick={onToggleHistory}
-          className={`px-2.5 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 transition-colors active:scale-95 ${
+          className={`h-8 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95 ${
             isHistoryOpen
               ? 'bg-indigo-600/90 border-indigo-400/50 text-white'
               : 'bg-slate-800/90 hover:bg-slate-700 border-white/10 text-slate-300 hover:text-white'
@@ -142,7 +142,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
           <History size={13} />
           <span>History</span>
           {historyCount > 0 && (
-            <span className="px-1.5 py-0.2 rounded bg-white/15 text-[10px] font-mono">
+            <span className="h-[18px] px-1.5 rounded bg-white/15 text-[10px] font-mono leading-none inline-flex items-center justify-center">
               {historyCount}
             </span>
           )}
@@ -154,7 +154,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
         <button
           type="button"
           onClick={onPasteClipboard}
-          className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors active:scale-95"
+          className="h-8 px-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
           title="Paste Image from Clipboard (Ctrl+V)"
         >
           <ClipboardPaste size={13} />
@@ -164,7 +164,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
         <button
           type="button"
           onClick={onOpenFile}
-          className="p-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white transition-colors active:scale-95"
+          className="w-8 h-8 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white flex items-center justify-center transition-colors active:scale-95"
           title="Open Image File"
         >
           <FileUp size={14} />
@@ -175,7 +175,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
             <button
               type="button"
               onClick={onCopyImage}
-              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 border border-rose-400/40 text-white text-xs font-bold flex items-center gap-1.5 transition-colors active:scale-95"
+              className="h-8 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 border border-rose-400/40 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
               title="Copy Annotated Image to Clipboard (Ctrl+C)"
             >
               <ClipboardCopy size={13} />
@@ -185,7 +185,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
             <button
               type="button"
               onClick={onSaveImage}
-              className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/40 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors active:scale-95"
+              className="h-8 px-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/40 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
               title="Save PNG File (Ctrl+S)"
             >
               <Download size={13} />
@@ -195,7 +195,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
             <button
               type="button"
               onClick={onClearCanvas}
-              className="p-2 rounded-xl bg-slate-800/90 hover:bg-rose-950 border border-white/10 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 transition-colors active:scale-95"
+              className="w-8 h-8 rounded-xl bg-slate-800/90 hover:bg-rose-950 border border-white/10 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 flex items-center justify-center transition-colors active:scale-95"
               title="Close Image"
             >
               <Trash2 size={14} />

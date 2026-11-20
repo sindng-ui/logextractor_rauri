@@ -14,8 +14,7 @@ export type ResizeHandleId =
   | 'se'
   | 'start'
   | 'end'
-  | 'control'
-  | 'tail';
+  | 'control';
 
 export interface AxisSlice {
   srcStart: number;
@@ -236,18 +235,217 @@ export function computeDocumentLayout(doc: AnnotatorDocument): DocumentLayout {
   };
 }
 
+let textMeasureCtx: CanvasRenderingContext2D | null | undefined;
+
+function getTextMeasureContext(): CanvasRenderingContext2D | null {
+  if (textMeasureCtx !== undefined) return textMeasureCtx;
+  if (typeof document === 'undefined') {
+    textMeasureCtx = null;
+    return null;
+  }
+  const c = document.createElement('canvas');
+  c.width = 1;
+  c.height = 1;
+  textMeasureCtx = c.getContext('2d');
+  return textMeasureCtx;
+}
+
+export interface TextBoxLayout {
+  box: RectBox;
+  lines: string[];
+  font: string;
+  padX: number;
+  padY: number;
+  lineStep: number;
+  centerX: number;
+  firstDrawY: number;
+  horizontalBias: number;
+}
+
+export function measureTextLayout(
+  item: Extract<AnnotationItem, { type: 'text' }>,
+  ctx?: CanvasRenderingContext2D | null
+): TextBoxLayout {
+  const lines = (item.text || 'Text').split('\n');
+  const fontSize = item.fontSize;
+  const font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
+  // Unified padding across border / pill / outline so switching variants never shifts text or arrow angle
+  const padX = Math.max(9, Math.round(fontSize * 0.64));
+  const padY = Math.max(5, Math.round(fontSize * 0.42));
+  const lineStep = Math.round(fontSize * 1.24);
+  const minContentH = fontSize * 0.78;
+
+  const measureCtx = ctx ?? getTextMeasureContext();
+  let maxW = 20;
+  let firstAscent = fontSize * 0.42;
+  let lastDescent = fontSize * 0.36;
+  let horizontalBias = 0;
+
+  if (measureCtx) {
+    measureCtx.font = font;
+    measureCtx.textAlign = 'center';
+    measureCtx.textBaseline = 'middle';
+
+    lines.forEach((line, idx) => {
+      const m = measureCtx.measureText(line || ' ');
+      const glyphW =
+        typeof m.actualBoundingBoxLeft === 'number' && typeof m.actualBoundingBoxRight === 'number'
+          ? m.actualBoundingBoxLeft + m.actualBoundingBoxRight
+          : 0;
+      maxW = Math.max(maxW, m.width, glyphW);
+
+      const hasVerticalMetrics =
+        typeof m.actualBoundingBoxAscent === 'number' &&
+        typeof m.actualBoundingBoxDescent === 'number' &&
+        (m.actualBoundingBoxAscent !== 0 || m.actualBoundingBoxDescent !== 0);
+
+      if (hasVerticalMetrics) {
+        if (idx === 0) firstAscent = m.actualBoundingBoxAscent;
+        if (idx === lines.length - 1) lastDescent = m.actualBoundingBoxDescent;
+      }
+
+      if (
+        lines.length === 1 &&
+        typeof m.actualBoundingBoxLeft === 'number' &&
+        typeof m.actualBoundingBoxRight === 'number' &&
+        m.actualBoundingBoxLeft > 0 &&
+        m.actualBoundingBoxRight > 0
+      ) {
+        const rawBias = (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2;
+        const limit = fontSize * 0.22;
+        horizontalBias = Math.max(-limit, Math.min(limit, rawBias));
+      }
+    });
+  } else {
+    const maxChars = Math.max(1, ...lines.map((l) => l.length));
+    maxW = Math.max(20, Math.round(maxChars * fontSize * 0.6));
+  }
+
+  const totalInkH =
+    lines.length === 1
+      ? Math.max(1, firstAscent + lastDescent)
+      : Math.max(minContentH, firstAscent + (lines.length - 1) * lineStep + lastDescent);
+  const contentH = Math.max(minContentH, totalInkH);
+  const boxW = Math.round(maxW + padX * 2);
+  const boxH = Math.round(contentH + padY * 2);
+  const firstDrawY = item.y + (boxH - totalInkH) / 2 + firstAscent;
+
+  return {
+    box: { x: item.x, y: item.y, w: boxW, h: boxH },
+    lines,
+    font,
+    padX,
+    padY,
+    lineStep,
+    centerX: item.x + boxW / 2,
+    firstDrawY,
+    horizontalBias,
+  };
+}
+
+export interface TextArrowAttachment {
+  startX: number;
+  startY: number;
+  tExit: number;
+  dist: number;
+  angle: number;
+}
+
+function computeRoundedBoxExitDist(
+  boxW: number,
+  boxH: number,
+  ux: number,
+  uy: number
+): number {
+  const halfW = boxW / 2;
+  const halfH = boxH / 2;
+  const cornerRadius = Math.min(8, halfW, halfH);
+
+  const tx = Math.abs(ux) > 1e-6 ? halfW / Math.abs(ux) : Infinity;
+  const ty = Math.abs(uy) > 1e-6 ? halfH / Math.abs(uy) : Infinity;
+  let tExit = Math.min(tx, ty);
+
+  const px = ux * tExit;
+  const py = uy * tExit;
+  const innerW = Math.max(0, halfW - cornerRadius);
+  const innerH = Math.max(0, halfH - cornerRadius);
+  if (cornerRadius > 0 && Math.abs(px) > innerW && Math.abs(py) > innerH) {
+    const ccx = Math.sign(px) * innerW;
+    const ccy = Math.sign(py) * innerH;
+    const b = -(ux * ccx + uy * ccy);
+    const c = ccx * ccx + ccy * ccy - cornerRadius * cornerRadius;
+    const disc = b * b - c;
+    if (disc >= 0) {
+      tExit = -b + Math.sqrt(disc);
+    }
+  }
+
+  // Tuck 0.5px into rounded perimeter to prevent sub-pixel seam; still leaves generous clearance around outline text
+  return Math.max(0, tExit - 0.5);
+}
+
+/**
+ * Compute exact ray exit point on the outer rounded boundary of a text label.
+ * Variant-independent so toggling border / pill / outline keeps both the text
+ * position and arrow angle/anchor 100% locked while maintaining clean halo clearance
+ * around text glyphs in Outline mode.
+ */
+export function computeTextArrowStart(
+  box: RectBox,
+  targetX: number,
+  targetY: number
+): TextArrowAttachment | null {
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+  const dx = targetX - cx;
+  const dy = targetY - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-3) return null;
+
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const effectiveExit = computeRoundedBoxExitDist(box.w, box.h, ux, uy);
+
+  return {
+    startX: cx + ux * effectiveExit,
+    startY: cy + uy * effectiveExit,
+    tExit: effectiveExit,
+    dist,
+    angle: Math.atan2(dy, dx),
+  };
+}
+
+/**
+ * Position a text label box so that an arrow extending toward `target` starts
+ * at the exact user-clicked `anchor` point on the label's outer boundary.
+ */
+export function positionTextBoxForArrowStart(
+  boxW: number,
+  boxH: number,
+  anchor: Point,
+  target?: Point | null
+): Point {
+  if (!target) {
+    return { x: anchor.x - boxW / 2, y: anchor.y - boxH / 2 };
+  }
+  const dx = target.x - anchor.x;
+  const dy = target.y - anchor.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-3) {
+    return { x: anchor.x - boxW / 2, y: anchor.y - boxH / 2 };
+  }
+  const ux = dx / dist;
+  const uy = dy / dist;
+  const tExit = computeRoundedBoxExitDist(boxW, boxH, ux, uy);
+  const cx = anchor.x - ux * tExit;
+  const cy = anchor.y - uy * tExit;
+  return { x: cx - boxW / 2, y: cy - boxH / 2 };
+}
+
 export function estimateTextBounds(
   item: Extract<AnnotationItem, { type: 'text' }>
 ): RectBox {
-  const lines = (item.text || 'Text').split('\n');
-  const maxChars = Math.max(1, ...lines.map((l) => l.length));
-  const padX = item.variant === 'outline' ? 6 : item.variant === 'border' ? 10 : 12;
-  const padY = item.variant === 'outline' ? 4 : item.variant === 'border' ? 5 : 8;
-  const lineH = Math.round(item.fontSize * 1.32);
-  const approxCharW = item.fontSize * 0.62;
-  const w = Math.max(36, Math.round(maxChars * approxCharW + padX * 2));
-  const h = Math.max(item.fontSize + padY * 2, lines.length * lineH + padY * 2);
-  return { x: item.x, y: item.y, w, h };
+  return measureTextLayout(item).box;
 }
 
 export function getAnnotationBounds(item: AnnotationItem): RectBox {
@@ -435,14 +633,10 @@ export function getAnnotationHandles(item: AnnotationItem): HandleDescriptor[] {
     return [];
   }
   if (item.type === 'text') {
-    const handles: HandleDescriptor[] = [];
     if (item.targetX !== undefined && item.targetY !== undefined) {
-      handles.push({ id: 'end', x: item.targetX, y: item.targetY, shape: 'square' });
+      return [{ id: 'end', x: item.targetX, y: item.targetY, shape: 'square' }];
     }
-    if (item.variant === 'callout' && item.tailX !== undefined && item.tailY !== undefined) {
-      handles.push({ id: 'tail', x: item.tailX, y: item.tailY, shape: 'diamond' });
-    }
-    return handles;
+    return [];
   }
   if (
     item.type === 'rect' ||
@@ -531,8 +725,6 @@ export function translateAnnotation(item: AnnotationItem, dx: number, dy: number
         ...item,
         x: item.x + dx,
         y: item.y + dy,
-        tailX: item.tailX !== undefined ? item.tailX + dx : undefined,
-        tailY: item.tailY !== undefined ? item.tailY + dy : undefined,
         targetX: item.targetX !== undefined ? item.targetX + dx : undefined,
         targetY: item.targetY !== undefined ? item.targetY + dy : undefined,
       };
@@ -567,9 +759,6 @@ export function applyHandleResize(
   }
   if (item.type === 'step' && handle === 'end') {
     return { ...item, targetX: pt.x, targetY: pt.y };
-  }
-  if (item.type === 'text' && handle === 'tail') {
-    return { ...item, tailX: pt.x, tailY: pt.y };
   }
   if (item.type === 'text' && handle === 'end') {
     const b = estimateTextBounds(item);
