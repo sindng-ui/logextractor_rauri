@@ -475,6 +475,7 @@ export const useLogExtractorLogic = ({
         pendingRestoreLeft,
         pendingRestoreRight,
         handleRestorePendingFile,
+        initialRestoreState,
     } = useLogFileOperations({
         tabId, initialFilePath, fileOpenToken, initialFile, isActive, onFileChange,
         leftWorkerRef, rightWorkerRef, leftViewerRef, rightViewerRef, tizenSocket,
@@ -1200,7 +1201,7 @@ export const useLogExtractorLogic = ({
         handleLineDoubleClickAction,
         leftFileName, leftWorkerReady, leftIndexingProgress, leftTotalLines, leftFilteredCount,
         activeLineIndexLeft, setActiveLineIndexLeft, selectedIndicesLeft, setSelectedIndicesLeft,
-        handleLeftFileChange, handleBrowseNative, pendingRestoreLeft, pendingRestoreRight, handleRestorePendingFile, handleLeftReset, requestLeftLines, requestLeftRawLines, handlePasteClipboard,
+        handleLeftFileChange, handleBrowseNative, pendingRestoreLeft, pendingRestoreRight, handleRestorePendingFile, initialRestoreState, handleLeftReset, requestLeftLines, requestLeftRawLines, handlePasteClipboard,
         rightFileName, rightWorkerReady, rightIndexingProgress, rightTotalLines, rightFilteredCount,
         activeLineIndexRight, setActiveLineIndexRight, selectedIndicesRight, setSelectedIndicesRight,
         leftBookmarks, rightBookmarks, toggleLeftBookmark, toggleRightBookmark,

@@ -9,22 +9,15 @@ import { ToastProvider, useToast, ToastItem } from './contexts/ToastContext';
 import { CommandProvider, useCommand } from './contexts/CommandContext';
 import { LogArchiveProvider, LogArchive, useLogArchiveContext } from './components/LogArchive';
 import PluginContainer from './components/PluginContainer';
-import LogExtractor from './components/LogExtractor';
 import { HappyPlugin } from './plugins/types';
 import CommandPalette from './components/CommandPalette/CommandPalette';
 import LoadingSplash from './components/LoadingSplash';
 import WindowTitleBarControls from './components/WindowTitleBarControls';
 import AppsLauncherModal from './components/Apps/AppsLauncherModal';
+import AppsHomeView from './components/Apps/AppsHomeView';
+import AppLaunchCurtain from './components/Apps/AppLaunchCurtain';
 import { APPS_REGISTRY } from './plugins/appsRegistry';
-import { Settings, FileUp, FileDown, Archive, FileText, LayoutGrid } from 'lucide-react';
-
-const LOG_EXTRACTOR_PLUGIN: HappyPlugin = {
-  id: ToolId.LOG_EXTRACTOR,
-  name: 'Log Extractor',
-  icon: FileText,
-  component: LogExtractor,
-  order: 1
-};
+import { Settings, FileUp, FileDown, Archive, LayoutGrid } from 'lucide-react';
 
 const CommandRegistrar: React.FC<{
   setIsSettingsOpen: (open: boolean) => void;
@@ -133,8 +126,73 @@ const AppContent: React.FC = () => {
   });
 
   const [enabledPlugins, setEnabledPlugins] = useState<string[]>([ToolId.LOG_EXTRACTOR]);
-  const [activePluginId, setActivePluginId] = useState<string>(ToolId.LOG_EXTRACTOR);
+  const [activePluginId, setActivePluginId] = useState<string | null>(null);
   const [isAppsLauncherOpen, setIsAppsLauncherOpen] = useState<boolean>(false);
+  const [launchingAppId, setLaunchingAppId] = useState<string | null>(null);
+
+  const readyPluginIdsRef = React.useRef<Set<string>>(new Set());
+  const launchStartRef = React.useRef<number>(0);
+  const curtainHideTimerRef = React.useRef<number | null>(null);
+  const curtainSafetyTimerRef = React.useRef<number | null>(null);
+
+  const clearCurtainTimers = React.useCallback(() => {
+    if (curtainHideTimerRef.current !== null) {
+      window.clearTimeout(curtainHideTimerRef.current);
+      curtainHideTimerRef.current = null;
+    }
+    if (curtainSafetyTimerRef.current !== null) {
+      window.clearTimeout(curtainSafetyTimerRef.current);
+      curtainSafetyTimerRef.current = null;
+    }
+  }, []);
+
+  const markPluginReady = React.useCallback(
+    (appId: string) => {
+      readyPluginIdsRef.current.add(appId);
+      setLaunchingAppId((current) => {
+        if (current !== appId) return current;
+        clearCurtainTimers();
+        const elapsed = performance.now() - launchStartRef.current;
+        const minHoldMs = 1000;
+        const remaining = Math.max(0, minHoldMs - elapsed);
+        if (remaining === 0) {
+          return null;
+        }
+        curtainHideTimerRef.current = window.setTimeout(() => {
+          curtainHideTimerRef.current = null;
+          setLaunchingAppId((cur) => (cur === appId ? null : cur));
+        }, remaining);
+        return current;
+      });
+    },
+    [clearCurtainTimers]
+  );
+
+  const handleSelectApp = React.useCallback(
+    (id: string) => {
+      if (id === activePluginId) return;
+      clearCurtainTimers();
+
+      if (!readyPluginIdsRef.current.has(id)) {
+        launchStartRef.current = performance.now();
+        setLaunchingAppId(id);
+        curtainSafetyTimerRef.current = window.setTimeout(() => {
+          curtainSafetyTimerRef.current = null;
+          readyPluginIdsRef.current.add(id);
+          setLaunchingAppId((cur) => (cur === id ? null : cur));
+        }, 8000);
+      } else {
+        setLaunchingAppId(null);
+      }
+
+      setActivePluginId(id);
+    },
+    [activePluginId, clearCurtainTimers]
+  );
+
+  useEffect(() => {
+    return () => clearCurtainTimers();
+  }, [clearCurtainTimers]);
 
   const appLauncherPlugins = React.useMemo<HappyPlugin[]>(
     () =>
@@ -143,17 +201,25 @@ const AppContent: React.FC = () => {
         name: app.name,
         icon: app.icon,
         component: app.component,
-        order: idx + 2,
+        order: idx + 1,
       })),
     []
   );
 
-  const subAppExtraProps = React.useMemo(
-    () => ({
-      onBackToLogs: () => setActivePluginId(ToolId.LOG_EXTRACTOR),
-      onOpenApps: () => setIsAppsLauncherOpen(true),
-    }),
-    []
+  const appExtraPropsMap = React.useMemo(() => {
+    const map: Record<string, { onOpenApps: () => void; onAppReady: () => void }> = {};
+    for (const app of APPS_REGISTRY) {
+      map[app.id] = {
+        onOpenApps: () => setIsAppsLauncherOpen(true),
+        onAppReady: () => markPluginReady(app.id),
+      };
+    }
+    return map;
+  }, [markPluginReady]);
+
+  const launchingApp = React.useMemo(
+    () => (launchingAppId ? APPS_REGISTRY.find((a) => a.id === launchingAppId) ?? null : null),
+    [launchingAppId]
   );
 
   // Focus Mode State (F11)
@@ -218,6 +284,7 @@ const AppContent: React.FC = () => {
 
     setTimeout(() => {
       setIsSettingsLoaded(true);
+      setIsInitialPluginReady(true);
     }, 150);
   }, []);
 
@@ -409,10 +476,6 @@ const AppContent: React.FC = () => {
     setIsBackendReady(true);
   };
 
-  const handlePluginLoaded = React.useCallback(() => {
-    setIsInitialPluginReady(true);
-  }, []);
-
   useEffect(() => {
     if (process.env.NODE_ENV === 'development' && !window.electronAPI) {
       setShowSplash(false);
@@ -459,7 +522,7 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+P: Toggle Apps Launcher (IME-safe via e.code === 'KeyP')
+      // Ctrl+Shift+P: Toggle Apps Launcher popover when an app is open (IME-safe via e.code === 'KeyP')
       if (
         (e.ctrlKey || e.metaKey) &&
         e.shiftKey &&
@@ -468,7 +531,9 @@ const AppContent: React.FC = () => {
       ) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        setIsAppsLauncherOpen(prev => !prev);
+        if (activePluginId !== null) {
+          setIsAppsLauncherOpen(prev => !prev);
+        }
         return;
       }
 
@@ -514,7 +579,7 @@ const AppContent: React.FC = () => {
 
     window.addEventListener('keydown', handleGlobalKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, { capture: true });
-  }, [isFocusMode]);
+  }, [isFocusMode, activePluginId]);
 
   useEffect(() => {
     if (window.electronAPI?.setZoomFactor) {
@@ -546,30 +611,33 @@ const AppContent: React.FC = () => {
             {/* TopRightActions moved to TopBar */}
             {/* TopRightActions removed from here */}
             {!isSettingsLoaded ? (
-              <div className="flex h-full items-center justify-center text-slate-500">Loading settings...</div>
+              <div className="flex h-full items-center justify-center text-slate-500 bg-[#070b14]" />
             ) : (
               <>
-                <PluginContainer
-                  plugin={LOG_EXTRACTOR_PLUGIN}
-                  isActive={activePluginId === ToolId.LOG_EXTRACTOR}
-                  onLoaded={handlePluginLoaded}
-                />
+                {activePluginId === null && (
+                  <AppsHomeView
+                    apps={APPS_REGISTRY}
+                    onSelectApp={handleSelectApp}
+                    onOpenSettings={() => setIsSettingsOpen(true)}
+                  />
+                )}
                 {appLauncherPlugins.map(appPlugin => (
                   <PluginContainer
                     key={appPlugin.id}
                     plugin={appPlugin}
                     isActive={activePluginId === appPlugin.id}
-                    extraProps={subAppExtraProps}
+                    extraProps={appExtraPropsMap[appPlugin.id]}
                   />
                 ))}
               </>
             )}
+            <AppLaunchCurtain app={launchingApp} />
             <AppsLauncherModal
               isOpen={isAppsLauncherOpen}
               onClose={() => setIsAppsLauncherOpen(false)}
               apps={APPS_REGISTRY}
               activePluginId={activePluginId}
-              onSelectApp={setActivePluginId}
+              onSelectApp={handleSelectApp}
             />
             <SettingsModal
               isOpen={isSettingsOpen}

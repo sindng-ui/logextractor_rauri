@@ -5,8 +5,8 @@ Welcome to the architectural map of **HappyTool Tauri** (Tauri 2.0 Standalone Hi
 ---
 
 ## 🏗️ 1. High-Level Architecture
-- **Frontend**: React 19 + TypeScript + Tailwind CSS + Vite (`index.tsx` -> `utils/tauriBridge.ts` -> `App.tsx` -> `LogExtractor.tsx` / `JsonBeautify` & `ScreenshotAnnotator` [lazy via `Ctrl+Shift+P` Apps Launcher] / `CliApp.tsx`)
-- **Apps Launcher**: `Ctrl+Shift+P` (`App.tsx` -> `components/Apps/AppsLauncherModal.tsx` + `plugins/appsRegistry.ts`) — Zero-Blur 60fps spring launcher (hosts `JSON Beautify` & `Snap Studio`, extensible by adding entries to `APPS_REGISTRY`).
+- **Frontend**: React 19 + TypeScript + Tailwind CSS + Vite (`index.tsx` -> `utils/tauriBridge.ts` -> `App.tsx` -> `AppsHomeView` [startup] -> `LogExtractor` / `JsonBeautify` / `ScreenshotAnnotator` [all equal `React.lazy` apps via `APPS_REGISTRY`] / `CliApp.tsx`)
+- **Apps Launcher**: Startup `AppsHomeView` & `Ctrl+Shift+P` Popover (`components/Apps/AppsHomeView.tsx`, `AppsLauncherModal.tsx`, `AppsLauncherPanel.tsx`, `AppLauncherCard.tsx` + `plugins/appsRegistry.ts`) — Dock-Rail Hybrid + `0.85s` Glass Clear Sweep, Zero-Blur 60fps, Zero-RAM JS chunk preload on hover (`Log Extractor`, `JSON Beautify`, `Snap Studio` all equal).
 - **Workers & Engine**: Rust WebAssembly (`happy_filter_bg.wasm`) + 8 Dedicated Web Workers (`workers/`, including `JsonBeautify.worker.ts`) + `SharedArrayBuffer` (COOP/COEP + WebView2 `additionalBrowserArgs`)
 - **Desktop Native Core (Tauri 2.0 Rust)**:
   - `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`

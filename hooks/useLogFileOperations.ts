@@ -89,6 +89,11 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
 
     const [pendingRestoreLeft, setPendingRestoreLeft] = useState<{ fileName: string; handle: FileSystemFileHandle } | null>(null);
     const [pendingRestoreRight, setPendingRestoreRight] = useState<{ fileName: string; handle: FileSystemFileHandle } | null>(null);
+    const [initialRestoreState, setInitialRestoreState] = useState<{
+        settled: boolean;
+        hasLeftFile: boolean;
+        hasRightFile: boolean;
+    }>({ settled: false, hasLeftFile: false, hasRightFile: false });
 
     useEffect(() => {
         isComponentStale.current = false;
@@ -234,6 +239,7 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
                         console.error(`[useLog-${pane}] Failed to restore file:`, targetPath, readErr);
                         if (!isComponentStale.current) {
                             setWorkerReady(true);
+                            setInitialRestoreState((prev) => ({ ...prev, settled: true, hasLeftFile: false }));
                             addToast?.(`파일을 다시 열 수 없습니다: ${fileName}`, 'warning');
                         }
                     });
@@ -305,6 +311,7 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
                 persistBrowserFileForReload(tabId, 'left', initialFile);
             }
             isLoadedRef.current = true;
+            setInitialRestoreState({ settled: true, hasLeftFile: true, hasRightFile: false });
             leftWorkerRef.current?.postMessage({ type: 'INIT_FILE', payload: initialFile });
             return;
         }
@@ -342,12 +349,17 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
             setIsDualView(true);
         }
 
+        let startedLeftFile = false;
+        let startedRightFile = false;
+
         if (leftTargetPath) {
+            startedLeftFile = true;
             loadFile(leftTargetPath, 'left', { persist: false });
         } else if (!isTauriEnvironment()) {
             const restoredLeft = await restoreBrowserFile(tabId, 'left');
             if (isComponentStale.current) return;
             if (restoredLeft.file) {
+                startedLeftFile = true;
                 setPendingRestoreLeft(null);
                 initWorkerFromBrowserFile('left', restoredLeft.file);
             } else if (restoredLeft.pendingHandle) {
@@ -357,11 +369,13 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
 
         if (savedIsDualView) {
             if (rightTargetPath) {
+                startedRightFile = true;
                 loadFile(rightTargetPath, 'right', { persist: false });
             } else if (!isTauriEnvironment()) {
                 const restoredRight = await restoreBrowserFile(tabId, 'right');
                 if (isComponentStale.current) return;
                 if (restoredRight.file) {
+                    startedRightFile = true;
                     setPendingRestoreRight(null);
                     initWorkerFromBrowserFile('right', restoredRight.file);
                 } else if (restoredRight.pendingHandle) {
@@ -371,6 +385,11 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
         }
 
         isLoadedRef.current = true; // ✅ Mark loaded to allow persistence
+        setInitialRestoreState({
+            settled: true,
+            hasLeftFile: startedLeftFile,
+            hasRightFile: startedRightFile,
+        });
     }, [tabId, initialFile, initialFilePath, loadFile, setIsDualView, initWorkerFromBrowserFile]);
 
     const handleLeftFileChange = useCallback((file: File) => {
@@ -615,5 +634,6 @@ export const useLogFileOperations = (props: UseLogFileOperationsProps) => {
         pendingRestoreLeft,
         pendingRestoreRight,
         handleRestorePendingFile,
+        initialRestoreState,
     };
 };

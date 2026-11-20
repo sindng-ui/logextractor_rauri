@@ -4,6 +4,7 @@ export default {
         "./index.html",
         "./*.{js,ts,jsx,tsx}",
         "./components/**/*.{js,ts,jsx,tsx}",
+        "./plugins/**/*.{js,ts,jsx,tsx}",
         "./workers/**/*.{js,ts,jsx,tsx}",
         "./src/**/*.{js,ts,jsx,tsx}",
     ],

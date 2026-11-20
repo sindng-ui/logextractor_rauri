@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  ArrowLeft,
   Camera,
   ClipboardCopy,
   ClipboardPaste,
@@ -32,7 +31,6 @@ interface AnnotatorHeaderProps {
   onCopyImage: () => void;
   onSaveImage: () => void;
   onClearCanvas: () => void;
-  onBackToLogs?: () => void;
   onOpenApps?: () => void;
 }
 
@@ -54,33 +52,20 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
   onCopyImage,
   onSaveImage,
   onClearCanvas,
-  onBackToLogs,
   onOpenApps,
 }) => {
   return (
     <header className="relative h-14 shrink-0 title-drag pl-3 pr-[144px] bg-[#0f172a] border-b border-indigo-500/30 flex items-center justify-between gap-2 z-30 select-none">
       {/* Left Navigation */}
       <div className="flex items-center gap-2 no-drag min-w-0">
-        {onBackToLogs && (
-          <button
-            type="button"
-            onClick={onBackToLogs}
-            className="px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors active:scale-95"
-            title="Back to Log Extractor"
-          >
-            <ArrowLeft size={14} />
-            <span>Logs</span>
-          </button>
-        )}
-
         {onOpenApps && (
           <button
             type="button"
             onClick={onOpenApps}
-            className="p-2 rounded-xl bg-indigo-500/15 hover:bg-indigo-600 border border-indigo-500/30 text-indigo-300 hover:text-white transition-colors active:scale-95"
-            title="Open Apps (Ctrl+Shift+P)"
+            className="w-9 h-9 rounded-xl bg-indigo-500/15 hover:bg-indigo-600 border border-indigo-500/30 text-indigo-300 hover:text-white flex items-center justify-center transition-colors active:scale-95"
+            title="Switch Apps (Ctrl+Shift+P)"
           >
-            <LayoutGrid size={15} />
+            <LayoutGrid size={16} />
           </button>
         )}
 

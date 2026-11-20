@@ -32,8 +32,8 @@ import JsonNodeInspector from './components/JsonNodeInspector';
 
 interface JsonBeautifyProps {
   isActive?: boolean;
-  onBackToLogs?: () => void;
   onOpenApps?: () => void;
+  onAppReady?: () => void;
 }
 
 const SAMPLE_JSON = JSON.stringify(
@@ -84,8 +84,8 @@ const loadSavedInspectorWidth = (): number => {
 
 const JsonBeautify: React.FC<JsonBeautifyProps> = ({
   isActive = true,
-  onBackToLogs,
   onOpenApps,
+  onAppReady,
 }) => {
   const { addToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,6 +114,9 @@ const JsonBeautify: React.FC<JsonBeautifyProps> = ({
   const snapshotsRef = useRef<JsonSnapshotItem[]>([]);
   snapshotsRef.current = snapshots;
   const didHydrateRef = useRef(false);
+  const readyNotifiedRef = useRef(false);
+  const [hydrationDone, setHydrationDone] = useState(false);
+  const [awaitingInitialParse, setAwaitingInitialParse] = useState(false);
 
   // Hydrate persisted snapshots lazily on first mount (only active 1 payload is read into RAM)
   useEffect(() => {
@@ -124,18 +127,25 @@ const JsonBeautify: React.FC<JsonBeautifyProps> = ({
     (async () => {
       try {
         const meta = await loadSnapshotMeta();
-        if (cancelled || meta.items.length === 0) return;
+        if (cancelled) return;
 
-        setSnapshots(meta.items);
-        if (meta.activeId) {
-          const raw = await loadSnapshotRaw(meta.activeId);
-          if (!cancelled && raw) {
-            setActiveSnapshotId(meta.activeId);
-            worker.parseJson(raw, 2);
+        if (meta.items.length > 0) {
+          setSnapshots(meta.items);
+          if (meta.activeId) {
+            const raw = await loadSnapshotRaw(meta.activeId);
+            if (!cancelled && raw) {
+              setActiveSnapshotId(meta.activeId);
+              setAwaitingInitialParse(true);
+              worker.parseJson(raw, 2);
+            }
           }
         }
       } catch (err) {
         console.warn('[JsonBeautify] Failed to hydrate persisted snapshots:', err);
+      } finally {
+        if (!cancelled) {
+          setHydrationDone(true);
+        }
       }
     })();
 
@@ -143,6 +153,23 @@ const JsonBeautify: React.FC<JsonBeautifyProps> = ({
       cancelled = true;
     };
   }, [worker.parseJson]);
+
+  // Signal curtain reveal once initial hydration + persisted JSON parse has painted
+  useEffect(() => {
+    if (readyNotifiedRef.current || !onAppReady || !hydrationDone) return;
+    if (awaitingInitialParse && !worker.stats && !worker.error) return;
+
+    readyNotifiedRef.current = true;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => onAppReady());
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+    };
+  }, [hydrationDone, awaitingInitialParse, worker.stats, worker.error, onAppReady]);
 
   const loadJsonPayload = useCallback(
     (
@@ -529,7 +556,6 @@ const JsonBeautify: React.FC<JsonBeautifyProps> = ({
           setActiveSnapshotId(null);
           void saveSnapshotMeta(snapshotsRef.current, null);
         }}
-        onBackToLogs={onBackToLogs}
         onOpenApps={onOpenApps}
       />
 

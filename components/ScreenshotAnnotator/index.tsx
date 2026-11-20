@@ -31,8 +31,8 @@ import AnnotatorHistoryDrawer from './components/AnnotatorHistoryDrawer';
 
 interface ScreenshotAnnotatorProps {
   isActive?: boolean;
-  onBackToLogs?: () => void;
   onOpenApps?: () => void;
+  onAppReady?: () => void;
 }
 
 const TOOL_KEY_MAP: Record<string, AnnotatorTool> = {
@@ -52,8 +52,8 @@ const TOOL_KEY_MAP: Record<string, AnnotatorTool> = {
 
 const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
   isActive = true,
-  onBackToLogs,
   onOpenApps,
+  onAppReady,
 }) => {
   const { addToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +74,22 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
 
   const state = useAnnotatorState(baseImgRef, overlayCacheRef);
   const { doc } = state;
+
+  // Signal curtain reveal once recent history metadata finishes hydrating
+  const readyNotifiedRef = useRef(false);
+  useEffect(() => {
+    if (readyNotifiedRef.current || !onAppReady || !state.isHistoryLoaded) return;
+    readyNotifiedRef.current = true;
+    let raf1 = 0;
+    let raf2 = 0;
+    raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => onAppReady());
+    });
+    return () => {
+      window.cancelAnimationFrame(raf1);
+      window.cancelAnimationFrame(raf2);
+    };
+  }, [state.isHistoryLoaded, onAppReady]);
 
   // Decode base image whenever doc.baseDataUrl changes
   useEffect(() => {
@@ -610,7 +626,6 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
           setIsFrameOpen(false);
           state.clearDocument();
         }}
-        onBackToLogs={onBackToLogs}
         onOpenApps={onOpenApps}
       />
 

@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { LogRule, AppSettings } from '../types';
 import LogSession from './LogSession';
-import { LogProvider } from './LogViewer/LogContext';
+import { LogProvider, useLogContext } from './LogViewer/LogContext';
 import { Plus, X, FileText, Copy, XCircle, Trash2, Archive } from 'lucide-react';
 import { useContextMenu } from './ContextMenu';
 import { useLogArchiveContext } from './LogArchive';
@@ -23,7 +23,10 @@ interface Tab {
     openRequestToken?: number;
 }
 
-const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
+const LogExtractor: React.FC<{ isActive?: boolean; onAppReady?: () => void }> = ({
+    isActive = true,
+    onAppReady,
+}) => {
     const {
         logRules: rules,
         setLogRules: onUpdateRules,
@@ -738,10 +741,12 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
                             >
                                 <SessionWrapper
                                     isActive={isActive && tab.id === activeTabId}
+                                    isPrimaryTab={tab.id === activeTabId}
+                                    hasExpectedFile={Boolean(tab.filePath || tab.initialFile)}
                                     title={tab.title}
                                     tabId={tab.id}
                                     onTitleChange={handleTitleChange}
-
+                                    onAppReady={onAppReady}
                                     findInAll={findInAll}
                                 />
                             </LogProvider>
@@ -756,15 +761,88 @@ const LogExtractor: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => 
     );
 };
 
-// Wrapper to properly pass props
+// Wrapper to properly pass props and notify curtain once the primary tab finishes initial paint
 const SessionWrapper: React.FC<{
     isActive: boolean;
+    isPrimaryTab: boolean;
+    hasExpectedFile: boolean;
     title: string;
     onTitleChange: (id: string, title: string) => void;
+    onAppReady?: () => void;
     tabId: string;
-
     findInAll: any;
-}> = React.memo(({ isActive, title, onTitleChange, tabId, findInAll }) => {
+}> = React.memo(({ isActive, isPrimaryTab, hasExpectedFile, title, onTitleChange, onAppReady, tabId, findInAll }) => {
+    const {
+        leftFileName,
+        leftWorkerReady,
+        leftIndexingProgress,
+        leftTotalLines,
+        rightWorkerReady,
+        rightIndexingProgress,
+        pendingRestoreLeft,
+        initialRestoreState,
+    } = useLogContext();
+    const notifiedReadyRef = React.useRef(false);
+
+    React.useEffect(() => {
+        if (!isPrimaryTab || notifiedReadyRef.current || !onAppReady) return;
+        // Wait until IndexedDB tabState & browser-handle inspection finishes
+        if (!initialRestoreState?.settled) return;
+
+        const expectingLeft =
+            (hasExpectedFile || initialRestoreState.hasLeftFile || Boolean(leftFileName)) &&
+            !pendingRestoreLeft;
+        const leftReady =
+            !expectingLeft ||
+            (leftWorkerReady && leftIndexingProgress >= 100 && leftTotalLines > 0);
+        const rightReady =
+            !initialRestoreState.hasRightFile ||
+            (rightWorkerReady && rightIndexingProgress >= 100);
+
+        if (!leftReady || !rightReady) return;
+
+        let raf1 = 0;
+        let raf2 = 0;
+        let paintTimer: number | null = null;
+
+        // Hold briefly while settled so any follow-up filter pass cancels & re-arms cleanly
+        // before curtain reveals the painted canvas with zero LoadingOverlay flash.
+        raf1 = window.requestAnimationFrame(() => {
+            raf2 = window.requestAnimationFrame(() => {
+                const settleDelayMs = expectingLeft ? 160 : 0;
+                if (settleDelayMs > 0) {
+                    paintTimer = window.setTimeout(() => {
+                        if (!notifiedReadyRef.current) {
+                            notifiedReadyRef.current = true;
+                            onAppReady();
+                        }
+                    }, settleDelayMs);
+                } else if (!notifiedReadyRef.current) {
+                    notifiedReadyRef.current = true;
+                    onAppReady();
+                }
+            });
+        });
+
+        return () => {
+            window.cancelAnimationFrame(raf1);
+            window.cancelAnimationFrame(raf2);
+            if (paintTimer !== null) window.clearTimeout(paintTimer);
+        };
+    }, [
+        isPrimaryTab,
+        hasExpectedFile,
+        initialRestoreState,
+        leftFileName,
+        leftWorkerReady,
+        leftIndexingProgress,
+        leftTotalLines,
+        rightWorkerReady,
+        rightIndexingProgress,
+        pendingRestoreLeft,
+        onAppReady,
+    ]);
+
     // We create a stable callback for this specific session instance
     const handleTitleChange = useCallback((newTitle: string) => {
         onTitleChange(tabId, newTitle);

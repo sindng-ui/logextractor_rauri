@@ -32,12 +32,7 @@ const PluginContainer: React.FC<PluginContainerProps> = ({ plugin, isActive, onL
 
     return (
         <React.Suspense fallback={
-            <div className={isActive ? "h-full w-full flex items-center justify-center text-slate-500" : "hidden"}>
-                <div className="flex flex-col items-center gap-3">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-500"></div>
-                    <div>Loading {plugin.name}...</div>
-                </div>
-            </div>
+            <div className={isActive ? "h-full w-full bg-[#070b14]" : "hidden"} />
         }>
             <div className={isActive ? "h-full w-full" : "hidden"}>
                 <Component isActive={isActive} {...extraProps} />

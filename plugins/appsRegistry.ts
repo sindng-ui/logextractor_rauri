@@ -1,5 +1,5 @@
 import React from 'react';
-import { Braces, Camera } from 'lucide-react';
+import { Braces, Camera, FileText } from 'lucide-react';
 import { ToolId } from '../types';
 
 export interface AppLauncherEntry {
@@ -20,17 +20,45 @@ export interface AppLauncherEntry {
   activeRowClass: string;
   chipClass: string;
   ghostClass: string;
+  preload: () => Promise<unknown>;
   component: React.LazyExoticComponent<React.ComponentType<any>>;
 }
 
-const LazyJsonBeautify = React.lazy(() => import('../components/JsonBeautify'));
-const LazyScreenshotAnnotator = React.lazy(() => import('../components/ScreenshotAnnotator'));
+const loadLogExtractor = () => import('../components/LogExtractor');
+const loadJsonBeautify = () => import('../components/JsonBeautify');
+const loadScreenshotAnnotator = () => import('../components/ScreenshotAnnotator');
+
+const LazyLogExtractor = React.lazy(loadLogExtractor);
+const LazyJsonBeautify = React.lazy(loadJsonBeautify);
+const LazyScreenshotAnnotator = React.lazy(loadScreenshotAnnotator);
 
 /**
- * Extensible Apps Registry for the Ctrl+Shift+P Apps Launcher.
- * Add new entries here to automatically register them in the launcher & app router.
+ * Extensible Apps Registry for HappyTool Apps Home & Ctrl+Shift+P Launcher.
+ * All apps are equal first-class React.lazy modules with zero-RAM chunk preloading on hover.
  */
 export const APPS_REGISTRY: AppLauncherEntry[] = [
+  {
+    id: ToolId.LOG_EXTRACTOR,
+    name: 'Log Extractor',
+    subtitle: 'Log Analyzer',
+    description: '1GB+ Native Rust Log Viewer, Happy Combo, Split Diff, Perf Flame & Live SDB/SSH',
+    quickHint: 'Drop .log → Filter in ms',
+    chips: ['1GB+ Rust', 'Happy Combo', 'Split Diff', 'Perf Flame', 'Live SDB'],
+    icon: FileText,
+    gradient: 'from-emerald-500 to-teal-500',
+    accentBg: 'bg-emerald-600/85',
+    accentText: 'text-emerald-200',
+    radialGlow: 'rgba(16, 185, 129, 0.22)',
+    dockShadow: '0 8px 20px rgba(16, 185, 129, 0.36)',
+    sweepGradient:
+      'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.03) 20%, rgba(255,255,255,0.125) 35%, rgba(255,255,255,0.03) 48%, rgba(255,255,255,0.075) 62%, rgba(110,231,183,0.035) 74%, transparent 100%)',
+    edgeBarClass: 'bg-emerald-400',
+    activeRowClass: 'bg-emerald-500/15 border-emerald-400/40',
+    chipClass: 'bg-emerald-500/15 border-emerald-400/30 text-emerald-200',
+    ghostClass: 'text-emerald-300',
+    preload: loadLogExtractor,
+    component: LazyLogExtractor,
+  },
   {
     id: ToolId.JSON_TOOLS,
     name: 'JSON Beautify',
@@ -49,7 +77,8 @@ export const APPS_REGISTRY: AppLauncherEntry[] = [
     edgeBarClass: 'bg-indigo-400',
     activeRowClass: 'bg-indigo-500/15 border-indigo-400/40',
     chipClass: 'bg-indigo-500/15 border-indigo-400/30 text-indigo-200',
-    ghostClass: 'text-indigo-400/[0.08]',
+    ghostClass: 'text-indigo-300',
+    preload: loadJsonBeautify,
     component: LazyJsonBeautify,
   },
   {
@@ -70,7 +99,8 @@ export const APPS_REGISTRY: AppLauncherEntry[] = [
     edgeBarClass: 'bg-rose-400',
     activeRowClass: 'bg-rose-500/15 border-rose-400/40',
     chipClass: 'bg-rose-500/15 border-rose-400/30 text-rose-200',
-    ghostClass: 'text-rose-400/[0.08]',
+    ghostClass: 'text-rose-300',
+    preload: loadScreenshotAnnotator,
     component: LazyScreenshotAnnotator,
   },
 ];
