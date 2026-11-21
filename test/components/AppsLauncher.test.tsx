@@ -4,7 +4,7 @@ import { render, fireEvent, cleanup } from '@testing-library/react';
 import { FileText, Braces, Camera } from 'lucide-react';
 import AppsHomeView from '../../components/Apps/AppsHomeView';
 import AppsLauncherModal from '../../components/Apps/AppsLauncherModal';
-import AppsLauncherPanel from '../../components/Apps/AppsLauncherPanel';
+import AppsLauncherPanel, { computeLauncherPanelHeight } from '../../components/Apps/AppsLauncherPanel';
 import { AppLauncherEntry } from '../../plugins/appsRegistry';
 
 const createMockApps = (): AppLauncherEntry[] => [
@@ -194,6 +194,69 @@ describe('Apps Launcher Rendering & Listener Optimizations', () => {
       expect(cancelMock).toHaveBeenCalledTimes(4); // cancelled on unmount
     } finally {
       HTMLElement.prototype.animate = originalAnimate;
+    }
+  });
+
+  it('computeLauncherPanelHeight scales dynamically for 4-5 apps and caps cleanly for 6+ apps', () => {
+    expect(computeLauncherPanelHeight(1)).toBe(280);
+    expect(computeLauncherPanelHeight(3)).toBe(280);
+    expect(computeLauncherPanelHeight(4)).toBe(336);
+    expect(computeLauncherPanelHeight(5)).toBe(396);
+    expect(computeLauncherPanelHeight(6)).toBe(404);
+    expect(computeLauncherPanelHeight(10)).toBe(404);
+  });
+
+  it('AppsLauncherPanel expands height for 4+ apps, renders description, and scrolls focused card into view', () => {
+    const baseApps = createMockApps();
+    const sixApps: AppLauncherEntry[] = [
+      ...baseApps,
+      ...baseApps.map((app, i) => ({
+        ...app,
+        id: `${app.id}_EXTRA_${i}`,
+        name: `${app.name} ${i + 4}`,
+        description: `Extended app description ${i + 4}`,
+      })),
+    ];
+
+    const scrollIntoViewMock = vi.fn();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scrollIntoViewMock;
+
+    try {
+      const { container, rerender, getByText } = render(
+        <AppsLauncherPanel
+          apps={sixApps}
+          activePluginId={null}
+          focusedIndex={0}
+          sweepTick={1}
+          mode="home"
+          onFocusChange={vi.fn()}
+          onSelectApp={vi.fn()}
+        />
+      );
+
+      const panelRoot = container.firstElementChild as HTMLElement;
+      expect(panelRoot.style.height).toBe('404px');
+      expect(panelRoot.style.maxHeight).toBe('calc(100vh - 140px)');
+      expect(getByText('Log analyzer')).toBeTruthy();
+
+      rerender(
+        <AppsLauncherPanel
+          apps={sixApps}
+          activePluginId={null}
+          focusedIndex={5}
+          sweepTick={2}
+          mode="popover"
+          onFocusChange={vi.fn()}
+          onSelectApp={vi.fn()}
+        />
+      );
+
+      expect(panelRoot.style.maxHeight).toBe('calc(100vh - 96px)');
+      expect(getByText('Extended app description 6')).toBeTruthy();
+      expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'nearest', behavior: 'smooth' });
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
     }
   });
 });

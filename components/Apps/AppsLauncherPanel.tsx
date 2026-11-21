@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { Settings, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, Settings, X } from 'lucide-react';
 import { AppLauncherEntry } from '../../plugins/appsRegistry';
 import AppLauncherCard from './AppLauncherCard';
 
@@ -13,6 +13,19 @@ interface AppsLauncherPanelProps {
   onSelectApp: (id: string) => void;
   onClose?: () => void;
   onOpenSettings?: () => void;
+}
+
+const MIN_PANEL_HEIGHT = 280;
+const MAX_PANEL_HEIGHT = 404;
+const DOCK_ITEM_STRIDE = 60; // 48px icon tile + 12px gap
+const DOCK_CHROME_HEIGHT = 96; // outer/list padding + bottom utility + hover breathing room
+
+export function computeLauncherPanelHeight(appCount: number): number {
+  if (appCount <= 3) return MIN_PANEL_HEIGHT;
+  return Math.max(
+    MIN_PANEL_HEIGHT,
+    Math.min(MAX_PANEL_HEIGHT, appCount * DOCK_ITEM_STRIDE + DOCK_CHROME_HEIGHT)
+  );
 }
 
 const SWEEP_DURATION_MS = 850;
@@ -47,10 +60,25 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
   onOpenSettings,
 }) => {
   const preloadedIdsRef = useRef<Set<string>>(new Set());
+  const dockScrollRef = useRef<HTMLDivElement>(null);
   const glintRef = useRef<HTMLDivElement>(null);
   const sweepRef = useRef<HTMLDivElement>(null);
   const glintAnimRef = useRef<Animation | null>(null);
   const sweepAnimRef = useRef<Animation | null>(null);
+  const [dockScrollHint, setDockScrollHint] = useState<{ up: boolean; down: boolean }>({
+    up: false,
+    down: false,
+  });
+
+  const panelHeight = useMemo(() => computeLauncherPanelHeight(apps.length), [apps.length]);
+
+  const syncDockScrollHints = useCallback(() => {
+    const el = dockScrollRef.current;
+    if (!el) return;
+    const up = el.scrollTop > 2;
+    const down = el.scrollTop + el.clientHeight < el.scrollHeight - 2;
+    setDockScrollHint((prev) => (prev.up === up && prev.down === down ? prev : { up, down }));
+  }, []);
 
   const triggerZeroRamPreload = useCallback((app?: AppLauncherEntry) => {
     if (!app || preloadedIdsRef.current.has(app.id)) return;
@@ -68,6 +96,26 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
   useEffect(() => {
     triggerZeroRamPreload(focusedApp);
   }, [focusedApp, triggerZeroRamPreload]);
+
+  // Keep dock scroll overflow cues synced on app count changes or viewport resize
+  useEffect(() => {
+    syncDockScrollHints();
+    const el = dockScrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(syncDockScrollHints);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [apps.length, panelHeight, syncDockScrollHints]);
+
+  // Auto-scroll focused dock tile into view when navigating via keyboard (5+ apps / compact viewport)
+  useEffect(() => {
+    const el = dockScrollRef.current;
+    if (!el) return;
+    const targetCard = el.querySelector<HTMLElement>(`[data-app-index="${focusedIndex}"]`);
+    if (targetCard && typeof targetCard.scrollIntoView === 'function') {
+      targetCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [focusedIndex]);
 
   // Re-trigger GPU compositor sweep on persistent DOM layers (zero unmount/remount DOM churn)
   useEffect(() => {
@@ -111,21 +159,53 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
   );
 
   return (
-    <div className="relative rounded-2xl overflow-hidden flex h-[280px]">
-      {/* Left Column: Text-Free Vertical Icon Dock Rail */}
+    <div
+      style={{
+        height: `${panelHeight}px`,
+        maxHeight: mode === 'popover' ? 'calc(100vh - 96px)' : 'calc(100vh - 140px)',
+      }}
+      className="relative rounded-2xl overflow-hidden flex"
+    >
+      {/* Left Column: Text-Free Vertical Icon Dock Rail (scales cleanly for 4+ apps with overflow fades) */}
       <div className="w-[76px] shrink-0 bg-[#080d19] border-r border-slate-800/90 py-3.5 flex flex-col items-center">
-        <div className="flex-1 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-3 py-1.5">
-          {apps.map((app, idx) => (
-            <AppLauncherCard
-              key={app.id}
-              app={app}
-              index={idx}
-              isActive={activePluginId === app.id}
-              isFocused={focusedIndex === idx}
-              onSelect={onSelectApp}
-              onHover={handleHover}
-            />
-          ))}
+        <div className="relative flex-1 w-full min-h-0 flex flex-col">
+          {/* Top overflow fade + chevron indicator (Zero-Blur) */}
+          <div
+            aria-hidden="true"
+            className={`absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-[#080d19] via-[#080d19]/80 to-transparent z-10 pointer-events-none flex items-start justify-center pt-0.5 transition-opacity duration-150 ${
+              dockScrollHint.up ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            <ChevronUp size={11} className="text-slate-400/80" />
+          </div>
+
+          <div
+            ref={dockScrollRef}
+            onScroll={syncDockScrollHints}
+            className="flex-1 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-3 py-1.5"
+          >
+            {apps.map((app, idx) => (
+              <AppLauncherCard
+                key={app.id}
+                app={app}
+                index={idx}
+                isActive={activePluginId === app.id}
+                isFocused={focusedIndex === idx}
+                onSelect={onSelectApp}
+                onHover={handleHover}
+              />
+            ))}
+          </div>
+
+          {/* Bottom overflow fade + chevron indicator (Zero-Blur) */}
+          <div
+            aria-hidden="true"
+            className={`absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-[#080d19] via-[#080d19]/80 to-transparent z-10 pointer-events-none flex items-end justify-center pb-0.5 transition-opacity duration-150 ${
+              dockScrollHint.down ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            <ChevronDown size={11} className="text-slate-400/80" />
+          </div>
         </div>
 
         {/* Bottom Utility Icon: Close (Popover) or Settings (Home) */}
@@ -233,7 +313,11 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
               {focusedApp.name}
             </h3>
 
-            <div className="flex items-center gap-1.5 flex-wrap mt-3.5">
+            <p className="mt-2 h-[34px] text-[12px] leading-[17px] text-slate-400/90 line-clamp-2">
+              {focusedApp.description}
+            </p>
+
+            <div className="flex items-center gap-1.5 flex-wrap mt-3">
               {focusedApp.chips.map((chip) => (
                 <span
                   key={chip}

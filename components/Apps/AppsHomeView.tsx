@@ -87,7 +87,7 @@ const AppsHomeView: React.FC<AppsHomeViewProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 420, damping: 32, mass: 0.68 }}
           style={{ willChange: 'transform, opacity' }}
-          className="w-full max-w-[520px] bg-[#0b1120] border border-slate-700/80 rounded-2xl shadow-[0_28px_72px_rgba(2,6,23,0.92)]"
+          className="w-full max-w-[560px] bg-[#0b1120] border border-slate-700/80 rounded-2xl shadow-[0_28px_72px_rgba(2,6,23,0.92)]"
         >
           <AppsLauncherPanel
             apps={apps}

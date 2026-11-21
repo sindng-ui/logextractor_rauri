@@ -21,7 +21,10 @@ const AppLauncherCard: React.FC<AppLauncherCardProps> = ({
   const Icon = app.icon;
 
   return (
-    <div className="relative w-full flex items-center justify-center">
+    <div
+      data-app-index={index}
+      className="relative w-full shrink-0 flex items-center justify-center"
+    >
       {/* Left edge rail active/focus indicator */}
       <span
         className={`absolute left-0 w-[3.5px] h-6 rounded-r transition-all duration-150 ${app.edgeBarClass} ${

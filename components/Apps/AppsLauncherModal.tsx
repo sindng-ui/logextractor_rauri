@@ -110,7 +110,7 @@ const AppsLauncherModal: React.FC<AppsLauncherModalProps> = ({
               mass: 0.65,
             }}
             style={{ willChange: 'transform, opacity', transformOrigin: 'top left' }}
-            className="relative w-full max-w-[492px] mt-[56px] ml-0.5 bg-[#0b1120] border border-slate-700/80 rounded-2xl shadow-[0_24px_64px_rgba(2,6,23,0.92)]"
+            className="relative w-full max-w-[496px] mt-[56px] ml-0.5 bg-[#0b1120] border border-slate-700/80 rounded-2xl shadow-[0_24px_64px_rgba(2,6,23,0.92)]"
           >
             {/* Anchor Caret */}
             <div className="absolute -top-[5px] left-[15px] w-2.5 h-2.5 rotate-45 bg-[#080d19] border-l border-t border-slate-700/80 z-20 pointer-events-none" />
