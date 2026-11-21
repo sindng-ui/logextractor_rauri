@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { LayoutGrid } from 'lucide-react';
 import { AppLauncherEntry } from '../../plugins/appsRegistry';
@@ -21,14 +21,13 @@ const AppsHomeView: React.FC<AppsHomeViewProps> = ({
 }) => {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [sweepTick, setSweepTick] = useState(1);
+  const focusedIndexRef = useRef(0);
 
   const handleFocusChange = useCallback((nextIndex: number) => {
-    setFocusedIndex((prev) => {
-      if (prev !== nextIndex) {
-        setSweepTick((t) => t + 1);
-      }
-      return nextIndex;
-    });
+    if (focusedIndexRef.current === nextIndex) return;
+    focusedIndexRef.current = nextIndex;
+    setFocusedIndex(nextIndex);
+    setSweepTick((t) => t + 1);
   }, []);
 
   useEffect(() => {
@@ -41,21 +40,13 @@ const AppsHomeView: React.FC<AppsHomeViewProps> = ({
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault();
-        setFocusedIndex((prev) => {
-          const next = (prev + 1) % apps.length;
-          if (next !== prev) setSweepTick((t) => t + 1);
-          return next;
-        });
+        handleFocusChange((focusedIndexRef.current + 1) % apps.length);
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
         e.preventDefault();
-        setFocusedIndex((prev) => {
-          const next = (prev - 1 + apps.length) % apps.length;
-          if (next !== prev) setSweepTick((t) => t + 1);
-          return next;
-        });
+        handleFocusChange((focusedIndexRef.current - 1 + apps.length) % apps.length);
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        const target = apps[focusedIndex];
+        const target = apps[focusedIndexRef.current];
         if (target) onSelectApp(target.id);
       } else if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key >= '1' && e.key <= '9') {
         const idx = Number(e.key) - 1;
@@ -68,7 +59,7 @@ const AppsHomeView: React.FC<AppsHomeViewProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [apps, focusedIndex, onSelectApp]);
+  }, [apps, handleFocusChange, onSelectApp]);
 
   return (
     <div

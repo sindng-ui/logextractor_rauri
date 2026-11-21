@@ -222,6 +222,9 @@ const AppContent: React.FC = () => {
     [launchingAppId]
   );
 
+  const handleOpenSettings = React.useCallback(() => setIsSettingsOpen(true), []);
+  const handleCloseAppsLauncher = React.useCallback(() => setIsAppsLauncherOpen(false), []);
+
   // Focus Mode State (F11)
   const [isFocusMode, setIsFocusMode] = useState(false);
   const toggleFocusMode = React.useCallback(() => setIsFocusMode(prev => !prev), []);
@@ -618,7 +621,7 @@ const AppContent: React.FC = () => {
                   <AppsHomeView
                     apps={APPS_REGISTRY}
                     onSelectApp={handleSelectApp}
-                    onOpenSettings={() => setIsSettingsOpen(true)}
+                    onOpenSettings={handleOpenSettings}
                   />
                 )}
                 {appLauncherPlugins.map(appPlugin => (
@@ -634,7 +637,7 @@ const AppContent: React.FC = () => {
             <AppLaunchCurtain app={launchingApp} />
             <AppsLauncherModal
               isOpen={isAppsLauncherOpen}
-              onClose={() => setIsAppsLauncherOpen(false)}
+              onClose={handleCloseAppsLauncher}
               apps={APPS_REGISTRY}
               activePluginId={activePluginId}
               onSelectApp={handleSelectApp}

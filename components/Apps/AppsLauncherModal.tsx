@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AppLauncherEntry } from '../../plugins/appsRegistry';
 import AppsLauncherPanel from './AppsLauncherPanel';
@@ -20,21 +20,22 @@ const AppsLauncherModal: React.FC<AppsLauncherModalProps> = ({
 }) => {
   const [focusedIndex, setFocusedIndex] = useState(0);
   const [sweepTick, setSweepTick] = useState(0);
+  const focusedIndexRef = useRef(0);
 
   useEffect(() => {
     if (!isOpen) return;
     const activeIdx = apps.findIndex((a) => a.id === activePluginId);
-    setFocusedIndex(activeIdx >= 0 ? activeIdx : 0);
+    const nextIdx = activeIdx >= 0 ? activeIdx : 0;
+    focusedIndexRef.current = nextIdx;
+    setFocusedIndex(nextIdx);
     setSweepTick((t) => t + 1);
   }, [isOpen, apps, activePluginId]);
 
   const handleFocusChange = useCallback((nextIndex: number) => {
-    setFocusedIndex((prev) => {
-      if (prev !== nextIndex) {
-        setSweepTick((t) => t + 1);
-      }
-      return nextIndex;
-    });
+    if (focusedIndexRef.current === nextIndex) return;
+    focusedIndexRef.current = nextIndex;
+    setFocusedIndex(nextIndex);
+    setSweepTick((t) => t + 1);
   }, []);
 
   const handleSelect = useCallback(
@@ -60,21 +61,13 @@ const AppsLauncherModal: React.FC<AppsLauncherModalProps> = ({
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault();
-        setFocusedIndex((prev) => {
-          const next = (prev + 1) % apps.length;
-          if (next !== prev) setSweepTick((t) => t + 1);
-          return next;
-        });
+        handleFocusChange((focusedIndexRef.current + 1) % apps.length);
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
         e.preventDefault();
-        setFocusedIndex((prev) => {
-          const next = (prev - 1 + apps.length) % apps.length;
-          if (next !== prev) setSweepTick((t) => t + 1);
-          return next;
-        });
+        handleFocusChange((focusedIndexRef.current - 1 + apps.length) % apps.length);
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        const target = apps[focusedIndex];
+        const target = apps[focusedIndexRef.current];
         if (target) {
           handleSelect(target.id);
         }
@@ -89,7 +82,7 @@ const AppsLauncherModal: React.FC<AppsLauncherModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isOpen, apps, focusedIndex, handleSelect, onClose]);
+  }, [isOpen, apps, handleFocusChange, handleSelect, onClose]);
 
   return (
     <AnimatePresence>
@@ -139,4 +132,4 @@ const AppsLauncherModal: React.FC<AppsLauncherModalProps> = ({
   );
 };
 
-export default AppsLauncherModal;
+export default React.memo(AppsLauncherModal);

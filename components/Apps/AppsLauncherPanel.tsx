@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
 import { Settings, X } from 'lucide-react';
 import { AppLauncherEntry } from '../../plugins/appsRegistry';
 import AppLauncherCard from './AppLauncherCard';
@@ -16,8 +15,21 @@ interface AppsLauncherPanelProps {
   onOpenSettings?: () => void;
 }
 
-const SWEEP_EASE = [0.25, 0.1, 0.25, 1] as const;
-const SWEEP_DURATION = 0.85;
+const SWEEP_DURATION_MS = 850;
+const SWEEP_EASING = 'cubic-bezier(0.25, 0.1, 0.25, 1)';
+
+const GLINT_KEYFRAMES: Keyframe[] = [
+  { transform: 'translate3d(-100%, 0, 0)', opacity: 0, offset: 0 },
+  { transform: 'translate3d(14%, 0, 0)', opacity: 1, offset: 0.3 },
+  { transform: 'translate3d(280%, 0, 0)', opacity: 0, offset: 1 },
+];
+
+const SWEEP_KEYFRAMES: Keyframe[] = [
+  { transform: 'translate3d(-140%, 0, 0) skewX(-22deg)', opacity: 0, offset: 0 },
+  { transform: 'translate3d(-71%, 0, 0) skewX(-22deg)', opacity: 1, offset: 0.15 },
+  { transform: 'translate3d(251%, 0, 0) skewX(-22deg)', opacity: 0.95, offset: 0.85 },
+  { transform: 'translate3d(320%, 0, 0) skewX(-22deg)', opacity: 0, offset: 1 },
+];
 
 /**
  * Shared Dock-Rail Hybrid + Glass Clear (0.85s) Specular Sweep Launcher Panel.
@@ -35,6 +47,10 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
   onOpenSettings,
 }) => {
   const preloadedIdsRef = useRef<Set<string>>(new Set());
+  const glintRef = useRef<HTMLDivElement>(null);
+  const sweepRef = useRef<HTMLDivElement>(null);
+  const glintAnimRef = useRef<Animation | null>(null);
+  const sweepAnimRef = useRef<Animation | null>(null);
 
   const triggerZeroRamPreload = useCallback((app?: AppLauncherEntry) => {
     if (!app || preloadedIdsRef.current.has(app.id)) return;
@@ -52,6 +68,39 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
   useEffect(() => {
     triggerZeroRamPreload(focusedApp);
   }, [focusedApp, triggerZeroRamPreload]);
+
+  // Re-trigger GPU compositor sweep on persistent DOM layers (zero unmount/remount DOM churn)
+  useEffect(() => {
+    if (sweepTick <= 0) return;
+
+    const glintEl = glintRef.current;
+    const sweepEl = sweepRef.current;
+    const timing: KeyframeAnimationOptions = {
+      duration: SWEEP_DURATION_MS,
+      easing: SWEEP_EASING,
+      fill: 'none',
+    };
+
+    if (glintEl && typeof glintEl.animate === 'function') {
+      glintAnimRef.current?.cancel();
+      glintAnimRef.current = glintEl.animate(GLINT_KEYFRAMES, timing);
+    }
+
+    if (sweepEl && typeof sweepEl.animate === 'function') {
+      sweepAnimRef.current?.cancel();
+      sweepAnimRef.current = sweepEl.animate(SWEEP_KEYFRAMES, timing);
+    }
+  }, [sweepTick]);
+
+  // Cancel any active compositor animations on unmount
+  useEffect(() => {
+    return () => {
+      glintAnimRef.current?.cancel();
+      sweepAnimRef.current?.cancel();
+      glintAnimRef.current = null;
+      sweepAnimRef.current = null;
+    };
+  }, []);
 
   const handleHover = useCallback(
     (idx: number) => {
@@ -118,18 +167,15 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
             className={`absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r ${focusedApp.gradient}`}
           />
 
-          {/* Top Edge Glass Glint (runs once per focus change, GPU transform only) */}
+          {/* Top Edge Glass Glint (persistent GPU layer, zero unmount/remount) */}
           <div className="absolute inset-x-0 top-0 h-[2px] overflow-hidden pointer-events-none">
-            <motion.div
-              key={`glint-${sweepTick}`}
-              initial={{ x: '-100%', opacity: 0 }}
-              animate={{ x: ['-100%', '280%'], opacity: [0, 1, 0] }}
-              transition={{
-                duration: SWEEP_DURATION,
-                ease: SWEEP_EASE,
-                times: [0, 0.3, 1],
+            <div
+              ref={glintRef}
+              style={{
+                willChange: 'transform, opacity',
+                opacity: 0,
+                transform: 'translate3d(-100%, 0, 0)',
               }}
-              style={{ willChange: 'transform, opacity' }}
               className="w-1/3 h-full bg-gradient-to-r from-transparent via-white/60 to-transparent"
             />
           </div>
@@ -137,22 +183,14 @@ const AppsLauncherPanel: React.FC<AppsLauncherPanelProps> = ({
           {/* Ultra-Thin Static Glass Specular Rim */}
           <div className="absolute inset-x-0 top-[2px] h-px bg-gradient-to-r from-white/[0.04] via-white/[0.14] to-white/[0.03] pointer-events-none" />
 
-          {/* Double-Streak Glass Clear Specular Sweep on Focus Change (GPU only) */}
+          {/* Double-Streak Glass Clear Specular Sweep on Focus Change (persistent GPU layer) */}
           <div className="absolute inset-0 overflow-hidden pointer-events-none z-20">
-            <motion.div
-              key={`sweep-${sweepTick}`}
-              initial={{ x: '-140%', skewX: -22, opacity: 0 }}
-              animate={{
-                x: ['-140%', '320%'],
-                opacity: [0, 1, 0.95, 0],
-              }}
-              transition={{
-                duration: SWEEP_DURATION,
-                ease: SWEEP_EASE,
-                times: [0, 0.15, 0.85, 1],
-              }}
+            <div
+              ref={sweepRef}
               style={{
                 willChange: 'transform, opacity',
+                opacity: 0,
+                transform: 'translate3d(-140%, 0, 0) skewX(-22deg)',
                 background: focusedApp.sweepGradient,
               }}
               className="absolute -inset-y-8 left-0 w-[38%]"
