@@ -68,7 +68,7 @@ fn format_spawn_error(bin: &str, err: &std::io::Error) -> String {
     }
 }
 
-async fn run_sdb_command_with_timeout(
+pub(crate) async fn run_sdb_command_with_timeout(
     bin: &str,
     args: &[String],
     timeout_secs: u64,

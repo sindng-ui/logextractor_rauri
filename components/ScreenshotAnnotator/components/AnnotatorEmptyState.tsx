@@ -1,10 +1,14 @@
 import React from 'react';
-import { Camera, ClipboardPaste, Clock, FileUp } from 'lucide-react';
+import { Camera, ClipboardPaste, Clock, FileUp, Loader2, MonitorSmartphone } from 'lucide-react';
 import { AnnotatorHistoryMeta } from '../../../types/screenshotAnnotator';
 
 interface AnnotatorEmptyStateProps {
   recentHistory: AnnotatorHistoryMeta[];
   isDragging?: boolean;
+  showSdbCapture?: boolean;
+  isSdbCapturing?: boolean;
+  sdbCountdownSec?: number | null;
+  onCaptureSdb?: () => void;
   onPasteClipboard: () => void;
   onOpenFile: () => void;
   onLoadSample: () => void;
@@ -14,6 +18,10 @@ interface AnnotatorEmptyStateProps {
 const AnnotatorEmptyState: React.FC<AnnotatorEmptyStateProps> = ({
   recentHistory,
   isDragging = false,
+  showSdbCapture = false,
+  isSdbCapturing = false,
+  sdbCountdownSec = null,
+  onCaptureSdb,
   onPasteClipboard,
   onOpenFile,
   onLoadSample,
@@ -43,7 +51,27 @@ const AnnotatorEmptyState: React.FC<AnnotatorEmptyStateProps> = ({
             PNG, JPG, WebP, or clipboard screenshot
           </p>
 
-          <div className="flex items-center justify-center gap-2.5">
+          <div className="flex items-center justify-center gap-2.5 flex-wrap">
+            {showSdbCapture && onCaptureSdb && (
+              <button
+                type="button"
+                onClick={onCaptureSdb}
+                disabled={isSdbCapturing}
+                className="px-4 py-2 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 disabled:opacity-60 text-white font-medium text-xs flex items-center gap-1.5 transition-colors active:scale-95"
+                title="Connect SDB & capture current device screen (Ctrl+Shift+D)"
+              >
+                {isSdbCapturing ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <MonitorSmartphone size={14} />
+                )}
+                {isSdbCapturing
+                  ? 'Capturing…'
+                  : sdbCountdownSec !== null
+                    ? `Cancel (${sdbCountdownSec}s)`
+                    : 'Capture SDB'}
+              </button>
+            )}
             <button
               type="button"
               onClick={onPasteClipboard}

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Camera,
+  ChevronDown,
   ClipboardCopy,
   ClipboardPaste,
   Download,
@@ -8,6 +9,8 @@ import {
   Frame,
   History,
   LayoutGrid,
+  Loader2,
+  MonitorSmartphone,
   Redo2,
   Trash2,
   Undo2,
@@ -22,10 +25,17 @@ interface AnnotatorHeaderProps {
   isFrameOpen: boolean;
   isHistoryOpen: boolean;
   historyCount: number;
+  showSdbCapture: boolean;
+  isSdbPopoverOpen: boolean;
+  isSdbCapturing: boolean;
+  sdbCountdownSec: number | null;
+  sdbTargetLabel: string;
   onUndo: () => void;
   onRedo: () => void;
   onToggleFramePopover: () => void;
   onToggleHistory: () => void;
+  onTriggerSdbCapture: () => void;
+  onToggleSdbPopover: () => void;
   onPasteClipboard: () => void;
   onOpenFile: () => void;
   onCopyImage: () => void;
@@ -43,10 +53,17 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
   isFrameOpen,
   isHistoryOpen,
   historyCount,
+  showSdbCapture,
+  isSdbPopoverOpen,
+  isSdbCapturing,
+  sdbCountdownSec,
+  sdbTargetLabel,
   onUndo,
   onRedo,
   onToggleFramePopover,
   onToggleHistory,
+  onTriggerSdbCapture,
+  onToggleSdbPopover,
   onPasteClipboard,
   onOpenFile,
   onCopyImage,
@@ -151,6 +168,47 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
 
       {/* Right Quick Actions */}
       <div className="flex items-center gap-1.5 no-drag">
+        {showSdbCapture && (
+          <div className="h-8 flex items-center rounded-xl overflow-hidden border border-emerald-500/40 bg-emerald-600/15">
+            <button
+              type="button"
+              onClick={onTriggerSdbCapture}
+              disabled={isSdbCapturing}
+              className="h-full px-2.5 hover:bg-emerald-600/30 disabled:opacity-60 text-emerald-200 hover:text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+              title={
+                sdbCountdownSec !== null
+                  ? 'Click to cancel delayed capture'
+                  : `Capture Tizen SDB Screen (${sdbTargetLabel}) · Ctrl+Shift+D`
+              }
+            >
+              {isSdbCapturing ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <MonitorSmartphone size={13} />
+              )}
+              <span className="hidden md:inline whitespace-nowrap">
+                {isSdbCapturing
+                  ? 'Capturing…'
+                  : sdbCountdownSec !== null
+                    ? `${sdbCountdownSec}s…`
+                    : 'SDB'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onToggleSdbPopover}
+              className={`h-full px-1.5 border-l border-emerald-500/30 flex items-center justify-center transition-colors ${
+                isSdbPopoverOpen
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-emerald-300 hover:bg-emerald-600/30 hover:text-white'
+              }`}
+              title="SDB Capture Settings (Device / IP / Delay)"
+            >
+              <ChevronDown size={12} />
+            </button>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={onPasteClipboard}

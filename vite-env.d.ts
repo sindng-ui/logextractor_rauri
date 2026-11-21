@@ -76,6 +76,13 @@ interface ElectronAPI {
 
     // --- SDB Helper ---
     runSdbCommand: (cmd: string) => Promise<{ stdout?: string; error?: boolean; message?: string }>;
+    listSdbDevices?: (sdbPath?: string) => Promise<{ id: string; type: string }[]>;
+    captureSdbScreen?: (options?: {
+        deviceId?: string;
+        sdbPath?: string;
+        customCommand?: string;
+        autoConnectIp?: string;
+    }) => Promise<{ deviceId: string; mime: string; bytes: Uint8Array }>;
 }
 
 interface Window {

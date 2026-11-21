@@ -1,0 +1,38 @@
+[Snap Studio One-Click SDB Device Capture Verification Results]
+Date: 2026-11-21
+
+1. Rust Backend Check:
+   Command: cargo check --manifest-path src-tauri/Cargo.toml
+   Result: EXIT CODE 0 (Finished dev profile in 16.35s, 0 errors, 0 warnings)
+   Modules verified:
+     - src-tauri/src/commands/sdb_capture.rs (413 lines: sdb_capture_screen, enlightenment_info -dump_screen 1st-priority capture + fallbacks, auto target/IP connect, Zero-Copy binary frame packing, async remote cleanup)
+     - src-tauri/src/commands/stream_sdb.rs (shared pub(crate) run_sdb_command_with_timeout)
+     - src-tauri/src/commands/mod.rs & src-tauri/src/lib.rs
+
+2. TypeScript Type Check:
+   Command: npx tsc --noEmit (excluding src-tauri/target/)
+   Result: 0 errors
+
+3. Vitest Unit & Component Tests:
+   Command: ./node_modules/.bin/vitest.cmd run test/components/AnnotatorSdbCapture.test.tsx test/screenshotAnnotator.test.ts test/components/AppsLauncher.test.tsx --pool=threads
+   Result: Test Files 3 passed (3), Tests 19 passed (19) (Duration 6.36s)
+   Cases verified:
+     - annotatorSdbSettings shares tizen_sdb_path & lastSdbDeviceId with Log Extractor (TizenConnectionModal)
+     - useAnnotatorSdbCapture unpacks non-zero byteOffset Uint8Array subarray cleanly into PNG dataUrl
+     - useAnnotatorSdbCapture supports instant replace vs ask(stitch), 3s delay countdown & cancellation, duplicate-click guard, and error callback
+     - AnnotatorSdbPopover scans devices on open, updates delay/options, and triggers capture cleanly
+     - Existing screenshotAnnotator (10 tests) & AppsLauncher (5 tests) zero regression
+
+4. Vite Production Build:
+   Command: npm run build
+   Result: EXIT CODE 0 (vite v6.4.5 built 2891 modules in 6.33s)
+
+5. Line Count Verification (900-line rule):
+   - src-tauri/src/commands/sdb_capture.rs: 413 lines
+   - utils/annotatorSdbSettings.ts: 59 lines
+   - utils/tauriBridge.ts: 533 lines
+   - components/ScreenshotAnnotator/index.tsx: 755 lines
+   - components/ScreenshotAnnotator/hooks/useAnnotatorSdbCapture.ts: 160 lines
+   - components/ScreenshotAnnotator/components/AnnotatorSdbPopover.tsx: 239 lines
+   - components/ScreenshotAnnotator/components/AnnotatorHeader.tsx: 254 lines
+   - components/ScreenshotAnnotator/components/AnnotatorEmptyState.tsx: 138 lines

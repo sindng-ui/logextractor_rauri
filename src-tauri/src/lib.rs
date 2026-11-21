@@ -1,8 +1,8 @@
 pub mod commands;
 
 use commands::{
-    file_io, log_engine, log_reader, settings_cli, stream_engine, stream_sdb, stream_serial,
-    stream_ssh, window_os,
+    file_io, log_engine, log_reader, sdb_capture, settings_cli, stream_engine, stream_sdb,
+    stream_serial, stream_ssh, window_os,
 };
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -186,6 +186,7 @@ pub fn run() {
             stream_sdb::sdb_clear,
             stream_sdb::sdb_disconnect,
             stream_sdb::sdb_connect_remote,
+            sdb_capture::sdb_capture_screen,
             stream_serial::serial_connect,
             stream_serial::serial_write,
             stream_serial::serial_special_key,

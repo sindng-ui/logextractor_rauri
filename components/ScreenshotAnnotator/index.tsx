@@ -20,12 +20,14 @@ import {
 import { generateUUID } from '../../utils/uuid';
 import { useAnnotatorState } from './hooks/useAnnotatorState';
 import { useAnnotatorCanvasInteraction } from './hooks/useAnnotatorCanvasInteraction';
+import { useAnnotatorSdbCapture } from './hooks/useAnnotatorSdbCapture';
 import AnnotatorHeader from './components/AnnotatorHeader';
 import AnnotatorToolRail from './components/AnnotatorToolRail';
 import AnnotatorStyleBar from './components/AnnotatorStyleBar';
 import AnnotatorCanvasStage from './components/AnnotatorCanvasStage';
 import AnnotatorEmptyState from './components/AnnotatorEmptyState';
 import AnnotatorFramePopover from './components/AnnotatorFramePopover';
+import AnnotatorSdbPopover from './components/AnnotatorSdbPopover';
 import AnnotatorStitchModal from './components/AnnotatorStitchModal';
 import AnnotatorHistoryDrawer from './components/AnnotatorHistoryDrawer';
 
@@ -63,6 +65,7 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
   const [baseImgVersion, setBaseImgVersion] = useState(0);
 
   const [isFrameOpen, setIsFrameOpen] = useState(false);
+  const [isSdbPopoverOpen, setIsSdbPopoverOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [pendingIncoming, setPendingIncoming] = useState<{
@@ -185,6 +188,42 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
     },
     [doc, state, addToast]
   );
+
+  const handleSdbCaptured = useCallback(
+    async (dataUrl: string, title: string, forceReplace: boolean) => {
+      if (!doc || forceReplace) {
+        try {
+          const img = await loadImageElement(dataUrl);
+          await state.loadNewDocument(dataUrl, img.naturalWidth, img.naturalHeight, title);
+          addToast(`Captured ${img.naturalWidth}×${img.naturalHeight} (${title})`, 'success');
+        } catch {
+          addToast('Failed to decode captured SDB screenshot', 'error');
+        }
+        return;
+      }
+      await handleIncomingImage(dataUrl, title);
+    },
+    [doc, state, addToast, handleIncomingImage]
+  );
+
+  const handleSdbError = useCallback(() => {
+    setIsSdbPopoverOpen(true);
+  }, []);
+
+  const sdbCapture = useAnnotatorSdbCapture({
+    onCaptured: handleSdbCaptured,
+    addToast,
+    onCaptureError: handleSdbError,
+  });
+
+  const isSdbAvailable =
+    isTauriEnvironment() || typeof window.electronAPI?.captureSdbScreen === 'function';
+
+  const sdbTargetLabel = useMemo(() => {
+    if (sdbCapture.settings.deviceId.trim()) return sdbCapture.settings.deviceId.trim();
+    if (sdbCapture.settings.autoConnectIp.trim()) return sdbCapture.settings.autoConnectIp.trim();
+    return 'Auto-detect';
+  }, [sdbCapture.settings.deviceId, sdbCapture.settings.autoConnectIp]);
 
   const handleStitchChoice = useCallback(
     async (mode: StitchMode) => {
@@ -503,7 +542,12 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
           handleSaveImage();
           return;
         }
-        if (e.code === 'KeyD' && doc && state.selectedId) {
+        if (e.code === 'KeyD' && e.shiftKey && isSdbAvailable) {
+          e.preventDefault();
+          sdbCapture.triggerCapture();
+          return;
+        }
+        if (e.code === 'KeyD' && !e.shiftKey && doc && state.selectedId) {
           e.preventDefault();
           const target = doc.annotations.find((a) => a.id === state.selectedId);
           if (target) {
@@ -528,7 +572,8 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
       if (e.altKey) return;
 
       if (e.key === 'Escape') {
-        if (isFrameOpen) setIsFrameOpen(false);
+        if (isSdbPopoverOpen) setIsSdbPopoverOpen(false);
+        else if (isFrameOpen) setIsFrameOpen(false);
         else if (state.selectedId) state.setSelectedId(null);
         else state.setTool('select');
         return;
@@ -557,6 +602,9 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
     state,
     doc,
     isFrameOpen,
+    isSdbPopoverOpen,
+    isSdbAvailable,
+    sdbCapture,
     handleCopyImage,
     handleSaveImage,
   ]);
@@ -614,10 +662,23 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
         isFrameOpen={isFrameOpen}
         isHistoryOpen={isHistoryOpen}
         historyCount={state.historyMeta.length}
+        showSdbCapture={isSdbAvailable}
+        isSdbPopoverOpen={isSdbPopoverOpen}
+        isSdbCapturing={sdbCapture.isCapturing}
+        sdbCountdownSec={sdbCapture.countdownSec}
+        sdbTargetLabel={sdbTargetLabel}
         onUndo={state.undo}
         onRedo={state.redo}
-        onToggleFramePopover={() => setIsFrameOpen((v) => !v)}
+        onToggleFramePopover={() => {
+          setIsSdbPopoverOpen(false);
+          setIsFrameOpen((v) => !v);
+        }}
         onToggleHistory={() => setIsHistoryOpen((v) => !v)}
+        onTriggerSdbCapture={sdbCapture.triggerCapture}
+        onToggleSdbPopover={() => {
+          setIsFrameOpen(false);
+          setIsSdbPopoverOpen((v) => !v);
+        }}
         onPasteClipboard={handlePasteFromClipboard}
         onOpenFile={() => fileInputRef.current?.click()}
         onCopyImage={handleCopyImage}
@@ -679,6 +740,10 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
           <AnnotatorEmptyState
             recentHistory={state.historyMeta}
             isDragging={isDraggingFile}
+            showSdbCapture={isSdbAvailable}
+            isSdbCapturing={sdbCapture.isCapturing}
+            sdbCountdownSec={sdbCapture.countdownSec}
+            onCaptureSdb={sdbCapture.triggerCapture}
             onPasteClipboard={handlePasteFromClipboard}
             onOpenFile={() => fileInputRef.current?.click()}
             onLoadSample={handleLoadSample}
@@ -712,6 +777,22 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
           config={doc.frameConfig}
           onChange={state.updateFrameConfig}
           onClose={() => setIsFrameOpen(false)}
+        />
+      )}
+
+      {isSdbAvailable && (
+        <AnnotatorSdbPopover
+          isOpen={isSdbPopoverOpen}
+          settings={sdbCapture.settings}
+          devices={sdbCapture.devices}
+          isScanning={sdbCapture.isScanning}
+          isCapturing={sdbCapture.isCapturing}
+          countdownSec={sdbCapture.countdownSec}
+          lastError={sdbCapture.lastError}
+          onUpdateSettings={sdbCapture.updateSettings}
+          onRefreshDevices={sdbCapture.refreshDevices}
+          onCaptureNow={sdbCapture.triggerCapture}
+          onClose={() => setIsSdbPopoverOpen(false)}
         />
       )}
 

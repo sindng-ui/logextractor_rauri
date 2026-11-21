@@ -541,6 +541,48 @@ export function createTauriElectronAPI() {
         runSdbCommand: async (cmd: string) => {
             return await invoke('run_sdb_command', { cmd });
         },
+
+        listSdbDevices: async (sdbPath?: string): Promise<{ id: string; type: string }[]> => {
+            if (!isTauriEnvironment()) return [];
+            const res = await invoke<{ id: string; type: string }[]>('native_list_sdb_devices', {
+                sdbPath: sdbPath?.trim() ? sdbPath.trim() : null,
+            });
+            return Array.isArray(res) ? res : [];
+        },
+
+        captureSdbScreen: async (options?: {
+            deviceId?: string;
+            sdbPath?: string;
+            customCommand?: string;
+            autoConnectIp?: string;
+        }): Promise<{ deviceId: string; mime: string; bytes: Uint8Array }> => {
+            if (!isTauriEnvironment()) {
+                throw new Error('SDB device capture is only available in the Tauri desktop app.');
+            }
+            const raw = await invoke<ArrayBuffer | Uint8Array | number[]>('sdb_capture_screen', {
+                deviceId: options?.deviceId?.trim() ? options.deviceId.trim() : null,
+                sdbPath: options?.sdbPath?.trim() ? options.sdbPath.trim() : null,
+                customCommand: options?.customCommand?.trim() ? options.customCommand.trim() : null,
+                autoConnectIp: options?.autoConnectIp?.trim() ? options.autoConnectIp.trim() : null,
+            });
+            const frame = toUint8Array(raw);
+            if (frame.byteLength < 8) {
+                throw new Error('Invalid binary capture response from SDB.');
+            }
+            const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+            const metaLen = view.getUint32(0, true);
+            if (metaLen === 0 || 4 + metaLen >= frame.byteLength) {
+                throw new Error('Corrupted capture metadata frame.');
+            }
+            const metaJson = new TextDecoder().decode(frame.subarray(4, 4 + metaLen));
+            const meta = JSON.parse(metaJson) as { deviceId?: string; mime?: string };
+            const imageBytes = frame.subarray(4 + metaLen);
+            return {
+                deviceId: meta.deviceId || 'SDB',
+                mime: meta.mime || 'image/png',
+                bytes: imageBytes,
+            };
+        },
     };
 }
 

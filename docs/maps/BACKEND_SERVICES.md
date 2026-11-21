@@ -9,6 +9,7 @@
 | `src-tauri/src/commands/window_os.rs` | `load_window_state`, `save_window_state` (`window-state.json`), `copy_to_clipboard(text)` (`arboard`), `open_external(target)` (`open`), `get_app_path()`, `toggle_fullscreen(flag)`, `set_zoom_factor(factor)` (`WebviewWindow::set_zoom`), `window_minimize()`, `window_toggle_maximize()`, `window_close()`. |
 | `src-tauri/src/commands/settings_cli.rs` | `get_startup_status()`, `splash_ready()`, `save_settings_file(settings)`, `get_cli_settings()`, `run_sdb_command(cmd)` (`CREATE_NO_WINDOW`), `cli_ready()`, `cli_stdout(msg)`, `cli_stderr(msg)`, `cli_exit(code)`. |
 | `src-tauri/src/commands/stream_engine.rs` | `spawn_backend_server(app_root)`, `stop_backend_server()`, `native_list_serial_ports()`, `native_list_sdb_devices(sdb_path)`, `native_start_scroll_stream(interval)`, `native_stop_scroll_stream()`. |
+| `src-tauri/src/commands/sdb_capture.rs` | `sdb_capture_screen(device_id, sdb_path, custom_command, auto_connect_ip) -> tauri::ipc::Response` (Auto SDB target detect/IP recovery, `enlightenment_info -dump_screen` 1st-priority capture + fallbacks, `sdb pull`, Zero-Copy `[meta_len][meta_json][image_bytes]` binary frame, immediate remote/local temp cleanup without disrupting live SDB log streams). |
 | `src-tauri/tauri.conf.json` | Tauri 2 configuration: `1400x900` frameless window (`decorations: false`, `dragDropEnabled: false`), COOP/COEP/CORP security headers, and `--enable-features=SharedArrayBuffer` browser args. |
 
 ## 2. Frontend Tauri Bridge Layer (`utils/`)
