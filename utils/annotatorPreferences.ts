@@ -60,10 +60,16 @@ export function loadAnnotatorPreferences(): AnnotatorPreferences {
         ? rawStyle.textVariant
         : defaults.style.textVariant;
 
+    const arrowHead =
+      rawStyle.arrowHead === 'end' || rawStyle.arrowHead === 'both'
+        ? rawStyle.arrowHead
+        : defaults.style.arrowHead;
+
     const style: AnnotatorStyleState = {
       ...defaults.style,
       ...rawStyle,
       textVariant,
+      arrowHead,
       strokeWidth:
         typeof rawStyle.strokeWidth === 'number' && Number.isFinite(rawStyle.strokeWidth)
           ? rawStyle.strokeWidth

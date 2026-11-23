@@ -1,5 +1,7 @@
 import React from 'react';
 import {
+  ArrowLeftRight,
+  ArrowRight,
   Maximize2,
   RotateCcw,
   Spline,
@@ -11,6 +13,7 @@ import {
   ANNOTATOR_COLORS,
   AnnotatorStyleState,
   AnnotatorTool,
+  ArrowHeadMode,
   CutoutStyle,
   HIGHLIGHTER_COLORS,
   TextVariant,
@@ -128,21 +131,49 @@ const AnnotatorStyleBar: React.FC<AnnotatorStyleBarProps> = ({
           </button>
         )}
 
-        {/* Curved Arrow Toggle */}
+        {/* Curved Arrow Toggle & Arrow Head Mode */}
         {effectiveTool === 'arrow' && (
-          <button
-            type="button"
-            onClick={() => onChangeStyle({ arrowCurved: !style.arrowCurved })}
-            className={`px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-colors ${
-              style.arrowCurved
-                ? 'bg-indigo-600/30 border-indigo-400/50 text-indigo-200'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-            }`}
-            title="Toggle curved Bezier arrow (drag diamond handle in Select mode to bend)"
-          >
-            <Spline size={12} />
-            <span>{style.arrowCurved ? 'Curved' : 'Straight'}</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onChangeStyle({ arrowCurved: !style.arrowCurved })}
+              className={`px-2 py-1 rounded-lg text-[11px] font-semibold border flex items-center gap-1 transition-colors ${
+                style.arrowCurved
+                  ? 'bg-indigo-600/30 border-indigo-400/50 text-indigo-200'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Toggle curved Bezier arrow (drag diamond handle in Select mode to bend)"
+            >
+              <Spline size={12} />
+              <span>{style.arrowCurved ? 'Curved' : 'Straight'}</span>
+            </button>
+
+            <div
+              className="flex items-center bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]"
+              title="Arrow head style (Single end or Both ends)"
+            >
+              {(
+                [
+                  { mode: 'end', label: 'Single', Icon: ArrowRight },
+                  { mode: 'both', label: 'Both', Icon: ArrowLeftRight },
+                ] as { mode: ArrowHeadMode; label: string; Icon: React.ComponentType<{ size?: number }> }[]
+              ).map(({ mode, label, Icon }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onChangeStyle({ arrowHead: mode })}
+                  className={`px-2 py-0.5 rounded font-semibold flex items-center gap-1 transition-colors ${
+                    style.arrowHead === mode
+                      ? 'bg-indigo-600 text-white'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Icon size={11} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* Step Counter Info */}

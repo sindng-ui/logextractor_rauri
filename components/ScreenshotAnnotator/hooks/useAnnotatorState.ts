@@ -27,7 +27,14 @@ import {
 import {
   createThumbnailDataUrl,
   renderDocumentToExportCanvas,
+  rotateImageElement90CW,
 } from '../../../utils/annotatorImageOps';
+import { computeDocumentLayout } from '../../../utils/annotatorGeometry';
+import {
+  rotateAnnotation90CW,
+  rotateCropRect90CW,
+  rotateCutout90CW,
+} from '../../../utils/annotatorRotation';
 import { generateUUID } from '../../../utils/uuid';
 
 const MAX_UNDO_DEPTH = 50;
@@ -349,6 +356,36 @@ export function useAnnotatorState(
     [commitDocChange]
   );
 
+  const rotateDocument90CW = useCallback(() => {
+    const img = baseImgRef.current;
+    if (!img || !img.complete || img.naturalWidth === 0) return;
+
+    const rotatedBaseDataUrl = rotateImageElement90CW(img);
+    commitDocChange((prev) => {
+      const layout = computeDocumentLayout(prev);
+      const effectiveHeight = layout.cutout.effectiveHeight;
+      return {
+        ...prev,
+        baseDataUrl: rotatedBaseDataUrl,
+        width: prev.height,
+        height: prev.width,
+        annotations: prev.annotations.map((item) => {
+          if (item.type === 'overlayImage') {
+            const ovImg = overlayCacheRef.current.get(item.dataUrl);
+            const rotatedOverlayUrl =
+              ovImg && ovImg.complete && ovImg.naturalWidth > 0
+                ? rotateImageElement90CW(ovImg)
+                : undefined;
+            return rotateAnnotation90CW(item, effectiveHeight, rotatedOverlayUrl);
+          }
+          return rotateAnnotation90CW(item, effectiveHeight);
+        }),
+        cutouts: prev.cutouts.map((c) => rotateCutout90CW(c, prev.height)),
+        cropRect: prev.cropRect ? rotateCropRect90CW(prev.cropRect, effectiveHeight) : null,
+      };
+    });
+  }, [baseImgRef, overlayCacheRef, commitDocChange]);
+
   const updateFrameConfig = useCallback(
     (patch: Partial<FrameConfig>) => {
       setSavedFrameConfig((prev) => ({ ...prev, ...patch }));
@@ -437,6 +474,9 @@ export function useAnnotatorState(
           updated.cy = midY + dx * 0.22;
         }
       }
+      if (patch.arrowHead !== undefined && updated.type === 'arrow') {
+        updated.arrowHead = patch.arrowHead;
+      }
       if (patch.textVariant !== undefined && updated.type === 'text') {
         updated.variant = patch.textVariant;
       }
@@ -486,6 +526,7 @@ export function useAnnotatorState(
     clearCutouts,
     setCropRect,
     replaceBaseImage,
+    rotateDocument90CW,
     updateFrameConfig,
     updateSpotlightConfig,
     resetStepNumber,

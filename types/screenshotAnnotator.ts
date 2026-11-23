@@ -25,6 +25,7 @@ export interface RectBox {
 }
 
 export type TextVariant = 'border' | 'pill' | 'outline';
+export type ArrowHeadMode = 'end' | 'both';
 export type MosaicMode = 'pixelate' | 'solid';
 export type CutoutStyle = 'zigzag' | 'wave' | 'gap';
 export type StitchMode = 'replace' | 'right' | 'below' | 'overlay';
@@ -64,6 +65,8 @@ export interface ArrowAnnotation extends BaseAnnotation {
   cx?: number;
   cy?: number;
   curved: boolean;
+  /** Arrow head placement: 'end' (default single) or 'both' (bidirectional) */
+  arrowHead?: ArrowHeadMode;
 }
 
 export interface StepAnnotation extends BaseAnnotation {
@@ -199,6 +202,7 @@ export interface AnnotatorStyleState {
   strokeWidth: number;
   fillOpacity: number;
   arrowCurved: boolean;
+  arrowHead: ArrowHeadMode;
   textVariant: TextVariant;
   fontSize: number;
   mosaicMode: MosaicMode;
@@ -256,6 +260,7 @@ export const DEFAULT_STYLE_STATE: AnnotatorStyleState = {
   strokeWidth: 4,
   fillOpacity: 0,
   arrowCurved: false,
+  arrowHead: 'end',
   textVariant: 'border',
   fontSize: 16,
   mosaicMode: 'pixelate',

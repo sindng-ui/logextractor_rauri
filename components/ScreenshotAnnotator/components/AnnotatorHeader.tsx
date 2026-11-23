@@ -12,6 +12,7 @@ import {
   Loader2,
   MonitorSmartphone,
   Redo2,
+  RotateCw,
   Trash2,
   Undo2,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ interface AnnotatorHeaderProps {
   sdbTargetLabel: string;
   onUndo: () => void;
   onRedo: () => void;
+  onRotateClockwise: () => void;
   onToggleFramePopover: () => void;
   onToggleHistory: () => void;
   onTriggerSdbCapture: () => void;
@@ -60,6 +62,7 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
   sdbTargetLabel,
   onUndo,
   onRedo,
+  onRotateClockwise,
   onToggleFramePopover,
   onToggleHistory,
   onTriggerSdbCapture,
@@ -129,6 +132,16 @@ const AnnotatorHeader: React.FC<AnnotatorHeaderProps> = ({
                 <Redo2 size={14} />
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={onRotateClockwise}
+              className="h-8 px-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-300 hover:text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors active:scale-95"
+              title="Rotate 90° Clockwise"
+            >
+              <RotateCw size={13} />
+              <span className="hidden lg:inline">Rotate</span>
+            </button>
 
             <button
               type="button"

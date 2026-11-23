@@ -82,6 +82,7 @@ export function createDraftAnnotation(
         x2: pt.x,
         y2: pt.y,
         curved: style.arrowCurved,
+        arrowHead: style.arrowHead,
         color: style.color,
         strokeWidth: style.strokeWidth,
       };

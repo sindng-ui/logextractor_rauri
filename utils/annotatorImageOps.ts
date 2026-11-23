@@ -11,6 +11,21 @@ export function loadImageElement(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Rotates a decoded HTMLImageElement 90 degrees clockwise and returns a PNG DataURL. */
+export function rotateImageElement90CW(img: HTMLImageElement): string {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = h;
+  canvas.height = w;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D unavailable');
+  ctx.translate(h, 0);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(img, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

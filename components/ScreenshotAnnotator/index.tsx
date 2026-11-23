@@ -620,6 +620,39 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
     return doc.annotations.find((a) => a.id === state.selectedId) ?? null;
   }, [doc, state.selectedId]);
 
+  const effectiveStyle = useMemo(() => {
+    if (!selectedAnnotation) return state.style;
+    return {
+      ...state.style,
+      color: selectedAnnotation.color,
+      strokeWidth: selectedAnnotation.strokeWidth,
+      ...(selectedAnnotation.type === 'rect' || selectedAnnotation.type === 'ellipse'
+        ? { fillOpacity: selectedAnnotation.fillOpacity }
+        : {}),
+      ...(selectedAnnotation.type === 'arrow'
+        ? {
+            arrowCurved: selectedAnnotation.curved,
+            arrowHead: selectedAnnotation.arrowHead ?? 'end',
+          }
+        : {}),
+      ...(selectedAnnotation.type === 'text'
+        ? {
+            textVariant: selectedAnnotation.variant,
+            fontSize: selectedAnnotation.fontSize,
+          }
+        : {}),
+      ...(selectedAnnotation.type === 'mosaic'
+        ? {
+            mosaicMode: selectedAnnotation.mode,
+            mosaicBlockSize: selectedAnnotation.blockSize,
+          }
+        : {}),
+      ...(selectedAnnotation.type === 'spotlight'
+        ? { spotlightShape: selectedAnnotation.shape }
+        : {}),
+    };
+  }, [selectedAnnotation, state.style]);
+
   const effectiveTool: AnnotatorTool = interaction.isCtrlSelectHeld ? 'select' : state.tool;
 
   return (
@@ -669,6 +702,7 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
         sdbTargetLabel={sdbTargetLabel}
         onUndo={state.undo}
         onRedo={state.redo}
+        onRotateClockwise={state.rotateDocument90CW}
         onToggleFramePopover={() => {
           setIsSdbPopoverOpen(false);
           setIsFrameOpen((v) => !v);
@@ -693,7 +727,7 @@ const ScreenshotAnnotator: React.FC<ScreenshotAnnotatorProps> = ({
       {doc && (
         <AnnotatorStyleBar
           tool={state.selectedId ? effectiveTool : state.tool}
-          style={state.style}
+          style={effectiveStyle}
           hasSelection={!!state.selectedId}
           selectedType={selectedAnnotation?.type ?? null}
           nextStepNumber={doc.nextStepNumber}

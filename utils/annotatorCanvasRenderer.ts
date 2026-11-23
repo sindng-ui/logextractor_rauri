@@ -19,6 +19,7 @@ import {
 let mosaicScratchCanvas: HTMLCanvasElement | null = null;
 let collapsedImageCache: {
   key: string;
+  baseImg: HTMLImageElement | HTMLCanvasElement;
   canvas: HTMLCanvasElement;
 } | null = null;
 let frameBgCache: {
@@ -61,8 +62,14 @@ function getOrBuildCollapsedBase(
   layout: DocumentLayout
 ): HTMLCanvasElement {
   const seamSig = doc.cutouts.map((c) => `${c.axis}:${c.start}:${c.end}:${c.style}`).join('|');
-  const key = `${doc.width}x${doc.height}:${doc.baseDataUrl.length}:${doc.baseDataUrl.slice(-24)}:${seamSig}`;
-  if (collapsedImageCache && collapsedImageCache.key === key) {
+  const imgW = baseImg instanceof HTMLImageElement ? baseImg.naturalWidth : baseImg.width;
+  const imgH = baseImg instanceof HTMLImageElement ? baseImg.naturalHeight : baseImg.height;
+  const key = `${doc.width}x${doc.height}:${imgW}x${imgH}:${doc.baseDataUrl.length}:${doc.baseDataUrl.slice(-24)}:${seamSig}`;
+  if (
+    collapsedImageCache &&
+    collapsedImageCache.key === key &&
+    collapsedImageCache.baseImg === baseImg
+  ) {
     return collapsedImageCache.canvas;
   }
 
@@ -92,7 +99,10 @@ function getOrBuildCollapsedBase(
     }
   }
 
-  collapsedImageCache = { key, canvas };
+  // Only cache once baseImg dimensions match the current document dimensions
+  if (imgW === doc.width && imgH === doc.height) {
+    collapsedImageCache = { key, baseImg, canvas };
+  }
   return canvas;
 }
 
@@ -356,26 +366,48 @@ function drawAnnotationItem(
       break;
     }
     case 'arrow': {
-      const headLen = Math.max(12, item.strokeWidth * 3.8);
+      const baseHeadLen = Math.max(12, item.strokeWidth * 3.8);
+      const isDoubleHead = item.arrowHead === 'both';
+      const chordDist = Math.hypot(item.x2 - item.x1, item.y2 - item.y1);
+      const headLen = isDoubleHead
+        ? Math.min(baseHeadLen, Math.max(8, chordDist * 0.42))
+        : baseHeadLen;
       const hasCurve = item.curved && item.cx !== undefined && item.cy !== undefined;
-      const angle = hasCurve
+      const endAngle = hasCurve
         ? Math.atan2(item.y2 - item.cy!, item.x2 - item.cx!)
         : Math.atan2(item.y2 - item.y1, item.x2 - item.x1);
-      const shaftEndX = item.x2 - Math.cos(angle) * (headLen * 0.65);
-      const shaftEndY = item.y2 - Math.sin(angle) * (headLen * 0.65);
+      const startAngle = hasCurve
+        ? Math.atan2(item.y1 - item.cy!, item.x1 - item.cx!)
+        : Math.atan2(item.y1 - item.y2, item.x1 - item.x2);
 
-      ctx.strokeStyle = item.color;
-      ctx.lineWidth = item.strokeWidth;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(item.x1, item.y1);
-      if (hasCurve) {
-        ctx.quadraticCurveTo(item.cx!, item.cy!, shaftEndX, shaftEndY);
-      } else {
-        ctx.lineTo(shaftEndX, shaftEndY);
+      const shaftStartX = isDoubleHead
+        ? item.x1 - Math.cos(startAngle) * (headLen * 0.65)
+        : item.x1;
+      const shaftStartY = isDoubleHead
+        ? item.y1 - Math.sin(startAngle) * (headLen * 0.65)
+        : item.y1;
+      const shaftEndX = item.x2 - Math.cos(endAngle) * (headLen * 0.65);
+      const shaftEndY = item.y2 - Math.sin(endAngle) * (headLen * 0.65);
+
+      const minShaftDist = isDoubleHead ? headLen * 1.15 : headLen * 0.55;
+      if (chordDist > minShaftDist) {
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = item.strokeWidth;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(shaftStartX, shaftStartY);
+        if (hasCurve) {
+          ctx.quadraticCurveTo(item.cx!, item.cy!, shaftEndX, shaftEndY);
+        } else {
+          ctx.lineTo(shaftEndX, shaftEndY);
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
-      drawArrowHead(ctx, item.x2, item.y2, angle, headLen, item.color);
+
+      drawArrowHead(ctx, item.x2, item.y2, endAngle, headLen, item.color);
+      if (isDoubleHead) {
+        drawArrowHead(ctx, item.x1, item.y1, startAngle, headLen, item.color);
+      }
       break;
     }
     case 'step': {
