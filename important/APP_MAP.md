@@ -155,6 +155,7 @@
   - `LogViewerEmptyState`: 빈 탭에 파일 드롭존과 함께 **"Paste from Clipboard"** 버튼 및 브라우저 새로고침 시 권한 재요청이 필요한 대용량 파일의 1클릭 **"Reopen \<filename\>"** 복원 버튼(`pendingRestoreFileName` / `onRestorePendingFile`)을 제공함. [UPDATED]
   - `EntityChipBar`: Raw View 헤더 아래에 렌더링되는 가로 스크롤 스마트 칩바. [NEW]
   - `logEntityDetector`: 타겟 로그 텍스트에서 PID, TID, Hex 주소를 정교하게 파싱하는 유틸리티. [NEW]
+  - `MissionManagerModal`: [MissionManagerModal.tsx](../components/LogViewer/MissionManagerModal.tsx) (`@dnd-kit/sortable` + `restrictToVerticalAxis` 기반 미션 드래그 순서 재정렬 모달) [UPDATED]
 - **Interactions**:
   - `Space`: 북마크 토글 (황금색 언더라인 강조) [MOD]
   - `Double Click`: 원본 로그 문맥(Raw Context) 보기 [MOD]
