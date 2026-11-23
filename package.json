@@ -1,7 +1,7 @@
 {
   "name": "happytool-tauri",
   "private": true,
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": "HappyTool Tauri - High-Performance Log Analyzer (Tauri 2.0 Edition)",
   "author": {
     "name": "granular.sim",

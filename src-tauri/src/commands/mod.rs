@@ -8,4 +8,5 @@ pub mod stream_engine;
 pub mod stream_sdb;
 pub mod stream_serial;
 pub mod stream_ssh;
+pub mod updater;
 pub mod window_os;

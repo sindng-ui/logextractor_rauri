@@ -6,7 +6,7 @@ Welcome to the architectural map of **HappyTool Tauri** (Tauri 2.0 Standalone Hi
 
 ## 🏗️ 1. High-Level Architecture
 - **Frontend**: React 19 + TypeScript + Tailwind CSS + Vite (`index.tsx` -> `utils/tauriBridge.ts` -> `App.tsx` -> `AppsHomeView` [startup] -> `LogExtractor` / `JsonBeautify` / `ScreenshotAnnotator` [all equal `React.lazy` apps via `APPS_REGISTRY`] / `CliApp.tsx`)
-- **Apps Launcher**: Startup `AppsHomeView` & `Ctrl+Shift+P` Popover (`components/Apps/AppsHomeView.tsx`, `AppsLauncherModal.tsx`, `AppsLauncherPanel.tsx`, `AppLauncherCard.tsx` + `plugins/appsRegistry.ts`) — Dock-Rail Hybrid + `0.85s` Glass Clear Sweep, Zero-Blur 60fps, Zero-RAM JS chunk preload on hover (`Log Extractor`, `JSON Beautify`, `Snap Studio` all equal).
+- **Apps Launcher**: Startup `AppsHomeView` & `Ctrl+Shift+P` Popover (`components/Apps/AppsHomeView.tsx`, `AppUpdateCard.tsx`, `AppsLauncherModal.tsx`, `AppsLauncherPanel.tsx`, `AppLauncherCard.tsx` + `plugins/appsRegistry.ts`, `hooks/useAppUpdater.ts`, `utils/appUpdater.ts`) — Dock-Rail Hybrid + `0.85s` Glass Clear Sweep, Zero-Blur 60fps, Zero-RAM JS chunk preload on hover (`Log Extractor`, `JSON Beautify`, `Snap Studio` all equal), and startup-only GitHub Release one-click updater.
 - **Workers & Engine**: Rust WebAssembly (`happy_filter_bg.wasm`) + 8 Dedicated Web Workers (`workers/`, including `JsonBeautify.worker.ts`) + `SharedArrayBuffer` (COOP/COEP + WebView2 `additionalBrowserArgs`)
 - **Desktop Native Core (Tauri 2.0 Rust)**:
   - `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`
@@ -14,6 +14,7 @@ Welcome to the architectural map of **HappyTool Tauri** (Tauri 2.0 Standalone Hi
   - `src-tauri/src/commands/window_os.rs` (Window State Persistence, Native WebView2 Zoom, Clipboard, Opener, Frameless Controls)
   - `src-tauri/src/commands/settings_cli.rs` (Settings Sync, SDB Command Runner, Headless CLI Mode)
   - `src-tauri/src/commands/stream_engine.rs` (Background Socket.IO Server Spawner & Native Serial/SDB/Scroll Stream Fallback)
+  - `src-tauri/src/commands/updater.rs` (GitHub Release SemVer Updater, Streaming Installer Download, Windows Silent Install & Relaunch)
 - **Platform Bridge & Streaming**:
   - `utils/tauriBridge.ts`: 1:1 `window.electronAPI` emulation, synchronous `getZoomFactor()`, `.title-drag` window dragging delegation, and local file path registry.
   - `utils/tauriSocket.ts`: `HybridTauriSocket` bridging port `3003` Socket.IO server (`server/index.cjs`) and Tauri Native IPC/Events.

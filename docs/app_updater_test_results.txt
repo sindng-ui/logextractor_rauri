@@ -1,0 +1,25 @@
+[GitHub Release One-Click App Updater Verification Results]
+Date: 2026-11-23
+
+1. Rust Backend Check & Test Compilation:
+   Command: Push-Location src-tauri; cargo check --all-targets; Pop-Location
+   Result: EXIT CODE 0 (Finished dev profile in 2.99s, 0 code errors/warnings on x86_64-pc-windows-gnu)
+   Modules verified:
+     - src-tauri/src/commands/updater.rs (get_app_version, check_app_update, download_and_install_update, cancel_app_update, cleanup_old_updates, SemVer parser/comparator, Windows NSIS `/P /UPDATE /R` & MSI `/passive` detached launcher with CREATE_NO_WINDOW + Stdio::null, unit tests compiled)
+     - src-tauri/src/commands/window_os.rs (minimized/off-screen `-32000` coordinate guard)
+     - src-tauri/src/commands/mod.rs & src-tauri/src/lib.rs (monitor bounds fallback, delayed 3s update temp cleanup)
+
+2. Vitest Unit & Component Tests:
+   Command: npx vitest run test/utils/appUpdater.test.ts test/components/AppUpdateCard.test.tsx test/components/AppsLauncher.test.tsx test/utils/tauriBridge.test.tsx
+   Result: Test Files 4 passed (4), Tests 17 passed (17) (Duration 15.42s)
+   Cases verified:
+     - test/utils/appUpdater.test.ts (4/4): SemVer parsing/comparison, formatting, ETag cache & skipped version persistence, browser fallback GitHub API check
+     - test/components/AppUpdateCard.test.tsx (4/4): Available update banner, What's New accordion, progress streaming & cancel, error retry, stale ETag cache invalidation when app version changes, top-left version badge rendering
+     - test/components/AppsLauncher.test.tsx (5/5) & test/utils/tauriBridge.test.tsx (4/4): Zero regression
+
+3. Vite Production Build:
+   Command: npm run build
+   Result: EXIT CODE 0 (vite v6.4.5 built 2900 modules in 7.00s)
+
+4. Manual End-to-End Verification (User Run):
+   - Installed/launched 1.0.0 release build -> detected GitHub Release v2.2.2 -> 1-click update downloaded, installed via NSIS `/P /UPDATE /R`, and relaunched v2.2.2 automatically.

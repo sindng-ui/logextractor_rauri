@@ -2,7 +2,7 @@ pub mod commands;
 
 use commands::{
     file_io, log_engine, log_reader, sdb_capture, settings_cli, stream_engine, stream_sdb,
-    stream_serial, stream_ssh, window_os,
+    stream_serial, stream_ssh, updater, window_os,
 };
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -100,6 +100,11 @@ pub fn run() {
         .setup(move |app| {
             let app_handle = app.handle().clone();
 
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                updater::cleanup_old_updates();
+            });
+
             if let Some(main_win) = app.get_webview_window("main") {
                 if is_cli_mode {
                     let _ = main_win.hide();
@@ -107,12 +112,45 @@ pub fn run() {
                 } else {
                     let state = window_os::load_window_state(&app_handle);
                     let _ = main_win.set_size(tauri::PhysicalSize::new(state.width, state.height));
+                    let mut placed = false;
                     if let (Some(x), Some(y)) = (state.x, state.y) {
-                        let _ = main_win.set_position(tauri::PhysicalPosition::new(x, y));
+                        let on_screen = main_win
+                            .available_monitors()
+                            .map(|monitors| {
+                                monitors.is_empty()
+                                    || monitors.iter().any(|m| {
+                                        let mp = m.position();
+                                        let ms = m.size();
+                                        x >= mp.x - 100
+                                            && x < mp.x + ms.width as i32
+                                            && y >= mp.y - 50
+                                            && y < mp.y + ms.height as i32
+                                    })
+                            })
+                            .unwrap_or(true);
+                        if on_screen {
+                            let _ = main_win.set_position(tauri::PhysicalPosition::new(x, y));
+                            placed = true;
+                        }
+                    }
+                    if !placed {
+                        let _ = main_win.center();
                     }
                     if state.is_maximized {
                         let _ = main_win.maximize();
                     }
+                    let _ = main_win.unminimize();
+                    let _ = main_win.show();
+                    let _ = main_win.set_focus();
+                    println!(
+                        "[HappyTool] Main window ready (v{}, {}x{}, pos={:?}/{:?}, placed={})",
+                        app_handle.package_info().version,
+                        state.width,
+                        state.height,
+                        state.x,
+                        state.y,
+                        placed
+                    );
                 }
 
                 let win_clone = main_win.clone();
@@ -196,6 +234,10 @@ pub fn run() {
             stream_ssh::ssh_auth_response,
             stream_ssh::ssh_clear,
             stream_ssh::ssh_disconnect,
+            updater::get_app_version,
+            updater::check_app_update,
+            updater::download_and_install_update,
+            updater::cancel_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running HappyTool Tauri application");

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { checkUpdateViaBrowserFetch } from './appUpdater';
 
 const filePathWeakMap = new WeakMap<File, string>();
 const fileSignatureMap = new Map<string, string>();
@@ -582,6 +583,57 @@ export function createTauriElectronAPI() {
                 mime: meta.mime || 'image/png',
                 bytes: imageBytes,
             };
+        },
+
+        // --- App Updater ---
+        getAppVersion: async (): Promise<string> => {
+            if (!isTauriEnvironment()) {
+                return typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.2.2';
+            }
+            return await invoke<string>('get_app_version');
+        },
+
+        checkAppUpdate: async (etag?: string | null): Promise<AppUpdateCheckResult> => {
+            if (!isTauriEnvironment()) {
+                const fallbackVer =
+                    typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.2.2';
+                return await checkUpdateViaBrowserFetch(fallbackVer, etag);
+            }
+            return await invoke<AppUpdateCheckResult>('check_app_update', {
+                etag: etag?.trim() ? etag.trim() : null,
+            });
+        },
+
+        downloadAndInstallUpdate: async (args: {
+            downloadUrl: string;
+            assetName: string;
+            expectedSize?: number | null;
+        }): Promise<AppUpdateInstallResult> => {
+            if (!isTauriEnvironment()) {
+                if (typeof window !== 'undefined' && args.downloadUrl) {
+                    window.open(args.downloadUrl, '_blank', 'noopener,noreferrer');
+                }
+                return {
+                    status: 'browser_opened',
+                    message: 'Opened release download in browser.',
+                };
+            }
+            return await invoke<AppUpdateInstallResult>('download_and_install_update', {
+                downloadUrl: args.downloadUrl,
+                assetName: args.assetName,
+                expectedSize: args.expectedSize ?? null,
+            });
+        },
+
+        cancelAppUpdate: async (): Promise<void> => {
+            if (!isTauriEnvironment()) return;
+            await invoke('cancel_app_update');
+        },
+
+        onUpdateDownloadProgress: (
+            callback: (progress: AppUpdateDownloadProgress) => void
+        ): (() => void) => {
+            return subscribeTauriEvent('update-download-progress', callback);
         },
     };
 }

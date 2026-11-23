@@ -1,6 +1,6 @@
 [package]
 name = "happytool-tauri"
-version = "2.2.2"
+version = "2.2.3"
 description = "HappyTool Light - High-Performance Log Analyzer (Tauri 2.0)"
 authors = ["granular.sim <granular.sim@samsung.com>"]
 edition = "2021"
@@ -24,3 +24,4 @@ serialport = "4"
 russh = "0.45"
 russh-keys = "0.45"
 async-trait = "0.1"
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json"] }

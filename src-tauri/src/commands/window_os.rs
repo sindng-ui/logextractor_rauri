@@ -39,11 +39,23 @@ pub fn get_window_state_path(app: &AppHandle) -> PathBuf {
     dir.join("window-state.json")
 }
 
+pub fn is_valid_window_position(x: i32, y: i32) -> bool {
+    (-10000..=20000).contains(&x) && (-10000..=20000).contains(&y)
+}
+
 pub fn load_window_state(app: &AppHandle) -> WindowState {
     let path = get_window_state_path(app);
     if path.exists() {
         if let Ok(data) = fs::read_to_string(&path) {
-            if let Ok(state) = serde_json::from_str::<WindowState>(&data) {
+            if let Ok(mut state) = serde_json::from_str::<WindowState>(&data) {
+                state.width = state.width.max(650);
+                state.height = state.height.max(600);
+                if let (Some(x), Some(y)) = (state.x, state.y) {
+                    if !is_valid_window_position(x, y) {
+                        state.x = None;
+                        state.y = None;
+                    }
+                }
                 return state;
             }
         }
@@ -52,11 +64,19 @@ pub fn load_window_state(app: &AppHandle) -> WindowState {
 }
 
 pub fn save_window_state(app: &AppHandle, win: &WebviewWindow) {
+    if win.is_minimized().unwrap_or(false) {
+        return;
+    }
+
     let is_maximized = win.is_maximized().unwrap_or(false);
     let size = win
         .outer_size()
         .unwrap_or(tauri::PhysicalSize::new(1400, 900));
-    let pos = win.outer_position().ok();
+    let pos = win.outer_position().ok().filter(|p| is_valid_window_position(p.x, p.y));
+
+    if size.width < 200 || size.height < 200 {
+        return;
+    }
 
     let state = WindowState {
         width: size.width.max(650),

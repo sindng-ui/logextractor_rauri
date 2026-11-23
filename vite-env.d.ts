@@ -83,6 +83,47 @@ interface ElectronAPI {
         customCommand?: string;
         autoConnectIp?: string;
     }) => Promise<{ deviceId: string; mime: string; bytes: Uint8Array }>;
+
+    // --- App Updater ---
+    getAppVersion?: () => Promise<string>;
+    checkAppUpdate?: (etag?: string | null) => Promise<AppUpdateCheckResult>;
+    downloadAndInstallUpdate?: (args: {
+        downloadUrl: string;
+        assetName: string;
+        expectedSize?: number | null;
+    }) => Promise<AppUpdateInstallResult>;
+    cancelAppUpdate?: () => Promise<void>;
+    onUpdateDownloadProgress?: (callback: (progress: AppUpdateDownloadProgress) => void) => () => void;
+}
+
+interface AppUpdateCheckResult {
+    status: 'available' | 'up_to_date' | 'not_modified';
+    hasUpdate: boolean;
+    currentVersion: string;
+    latestVersion?: string | null;
+    releaseName?: string | null;
+    releaseNotes?: string | null;
+    publishedAt?: string | null;
+    htmlUrl?: string | null;
+    downloadUrl?: string | null;
+    assetName?: string | null;
+    assetSize?: number | null;
+    etag?: string | null;
+    isDevMode: boolean;
+}
+
+interface AppUpdateDownloadProgress {
+    downloadedBytes: number;
+    totalBytes?: number | null;
+    percent: number;
+    speedBps: number;
+    stage: 'downloading' | 'installing';
+}
+
+interface AppUpdateInstallResult {
+    status: 'installing' | 'dev_downloaded' | 'cancelled' | 'browser_opened';
+    installerPath?: string | null;
+    message?: string | null;
 }
 
 interface Window {
